@@ -78,7 +78,7 @@ macro lPop reg {
 
 macro doNext {
     ret
-    ; jmp interpret
+    ;jmp interpret
 }
 
 ; ******************************************************************************
@@ -119,7 +119,7 @@ interpret:
 
     cmp     rbx, primEnd        ; Primitive? (30% - most common non-XT exit)
     jnb     .chklit
-    ; jmp     rbx                 ; Execute primitive
+    ;jmp     rbx                 ; Execute primitive
     call    rbx                 ; Execute primitive
     jmp     interpret
 
@@ -142,7 +142,7 @@ interpret:
 
 .done:      
     mov     r13, rStack         ; Reset return stack
-    doNext
+    ret
 
 ; ******************************************************************************
 ; Primitives
@@ -443,7 +443,8 @@ p_BASE:
 ; XT = HERE (captured by addDictEntry)
 p_ADDDICT:
     sPop    rsi                 ; rsi = name string
-    jmp     addDictEntry        ; tail call
+    call    addDictEntry        ; tail call
+    doNext
 
 ; Control flow
 p_BRANCH:
@@ -1023,7 +1024,7 @@ outer:
 
 .done:
     pop     qword [TOIN]        ; restore TOIN
-    doNext
+    ret
 
 ; ******************************************************************************
 ; Dictionary initialization
