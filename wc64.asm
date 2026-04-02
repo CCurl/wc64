@@ -12,10 +12,11 @@ entry main
 ; ******************************************************************************
 ; TOS  = rax         Top of data stack (caller-saved, efficient)
 ; STKP = rbp         Data stack pointer (callee-saved)
-; PCIP = r15         Forth instruction pointer (callee-saved)
+; LSP  = r12         Loop stack pointer (callee-saved)
 ; RSP  = r13         Return stack pointer (callee-saved)
 ; TSP  = r14         Temp/locals stack pointer (callee-saved)
-; Scratch: rbx, rcx, rdx, rsi, rdi, r8-r12
+; PCIP = r15         Forth instruction pointer (callee-saved)
+; Scratch: rbx, rcx, rdx, rsi, rdi, r8-r11
 
 ; ******************************************************************************
 ; Constants
@@ -65,6 +66,17 @@ macro rPop reg {
 }
 
 ; ******************************************************************************
+macro lPush val {
+    add     r12, CELL_SZ
+    mov     [r12], val
+}
+
+macro lPop reg {
+    mov     reg, [r12]
+    sub     r12, CELL_SZ
+}
+
+; ******************************************************************************
 ; Main Entry Point
 ; ******************************************************************************
 main:
@@ -73,7 +85,7 @@ main:
     mov     rbx, THE_CODE
     mov     [HERE], rbx
     
-    ; Initialize stacks
+    ; Initialize stacks (except r12, which needs to be set after initDict)
     mov     r13, rStack         ; Return stack
     mov     rbp, dStack         ; Data stack
     mov     r14, tStack         ; Temp/locals stack
@@ -81,6 +93,9 @@ main:
 
     ; Initialize dictionary with primitives
     call    initDict
+
+    ; Initialize r12 AFTER initDict to ensure it's not clobbered
+    mov     r12, lStack         ; Loop stack
 
     mov     r15, THE_ROM        ; Instruction pointer
     
@@ -103,7 +118,8 @@ interpret:
     cmp     rbx, primEnd        ; Primitive? (30% - most common non-XT exit)
     jb      primDispatch
 
-    js      .number             ; Literal? bit63 set (10%)
+    test    rbx, rbx            ; Literal? bit63 set (10%)
+    js      .number
 
     ; Colon definition (60% = 50% XT + 10% TCO) - falls through
     cmp     qword [r15], p_EXIT ; tail call?
@@ -321,6 +337,40 @@ p_KEY:
     
     movzx   rax, byte [charBuf]
     sPush   rax
+    ret
+
+; FOR/NEXT/I
+p_FOR: ; ( limit-- ), index goes from 0 to limit-1
+    sPop    rbx                 ; limit
+    lPush   r15                 ; start -> loop stack
+    lPush   rbx                 ; limit -> loop stack
+    xor     r11, r11
+    lPush   r11                 ; index -> loop stack
+    ret
+
+p_INDEX: ; ( -- index)
+    mov     r11, [r12]          ; index
+    sPush   r11                 ; push index onto stack
+    ret
+
+p_NEXT: ; ( -- )
+    mov     r11, [r12]          ; index
+    inc     r11
+    cmp     r11, [r12-8]        ; limit
+    jge     p_UNLOOP
+    mov     [r12], r11
+    mov     r15, [r12-16]       ; restart loop
+    ret
+
+p_UNLOOP: ; ( -- )  unwind the loop stack frame
+    lPop    rbx                 ; discard index
+    lPop    rbx                 ; discard limit
+    lPop    rbx                 ; discard start
+    cmp     r12, lStack         ; Check loop stack underflow
+    jge     .lDone
+    mov     r12, lStack
+.lDone:
+    mov     r11, [r12]
     ret
 
 ; Code pointer
@@ -906,7 +956,9 @@ outer:
     xor     rbx, rbx
     rPush   rbx                 ; NULL sentinel so interpret exits cleanly
     push    r15                 ; save outer IP
-    mov     r15, rdx
+    mov     [execBuf], rdx
+    mov     [execBuf+8], p_EXIT ; return to EXIT when done
+    lea     r15, [execBuf]
     call    interpret
     pop     r15                 ; restore outer IP
     jmp     .loop
@@ -1022,6 +1074,10 @@ primTable:
     dq nm_EMIT,      p_EMIT
     dq nm_TYPE,      p_TYPE
     dq nm_KEY,       p_KEY
+    dq nm_FOR,       p_FOR
+    dq nm_INDEX,     p_INDEX
+    dq nm_NEXT,      p_NEXT
+    dq nm_UNLOOP,    p_UNLOOP
     dq nm_HERE,      p_HERE
     dq nm_MEM,       p_MEM
     dq nm_COMMA,     p_COMMA
@@ -1075,19 +1131,18 @@ primTable:
 ; boot - open wc64-boot.fth, read into THE_CODE+100000, call outer
 ; Runs as threaded code via THE_ROM
 boot:
-    dq p_TSPI                           ; +L  (x=fd)
     dq p_LIT, bootFile, p_LIT, 0       ; ( name O_RDONLY )
-    dq p_FOPEN                          ; ( fd )
+    dq p_FOPEN                         ; ( fd )
     dq p_DUP, p_LIT, 0, p_LESS         ; ( fd fd<0 )
     dq p_ZBRANCH, boot_ok
     dq p_DROP
     dq p_LIT, bootErrStr, p_LIT, bootErrLen, p_TYPE
     dq p_TSPD, p_BYE
 boot_ok:
-    dq p_XSTO                           ; x = fd
+    dq p_XSTO                          ; x = fd
     dq p_LIT, THE_CODE+100000
     dq p_LIT, bootBufSz
-    dq p_XFET, p_FREAD                  ; ( n )  bytes read
+    dq p_XFET, p_FREAD                 ; ( n )  bytes read
     dq p_DUP, p_LIT, 0, p_LESS         ; ( n n<0 )
     dq p_ZBRANCH, boot_read_ok
     dq p_DROP
@@ -1095,12 +1150,12 @@ boot_ok:
     dq p_TSPD, p_BYE
 boot_read_ok:
     dq p_DROP
-    dq p_XFET, p_FCLOSE                 ; close fd
+    dq p_XFET, p_FCLOSE                ; close fd
     ; null-terminate the buffer
     dq p_LIT, THE_CODE+100000
     dq p_SLEN
     dq p_LIT, THE_CODE+100000
-    dq p_PLUS                           ; ( end_addr )
+    dq p_PLUS                          ; ( end_addr )
     dq p_LIT, 0, p_SWAP, p_CSTORE      ; [end] = 0
     ; call outer with the buffer
     dq p_LIT, THE_CODE+100000
@@ -1126,9 +1181,8 @@ TOIN        dq 0
 
 WD          rb 32
 charBuf     db 0
-spaceStr    db ' '
 crStr       db 10
-numBuf      rb 32
+
 ; Primitive names
 nm_EXIT     db 'exit',    0
 nm_DUP      db 'dup',     0
@@ -1160,6 +1214,10 @@ nm_LIT      db 'lit',     0
 nm_EMIT     db 'emit',    0
 nm_TYPE     db 'type',    0
 nm_KEY      db 'key',     0
+nm_FOR      db 'for',     0
+nm_INDEX    db 'i',       0
+nm_NEXT     db 'next',    0
+nm_UNLOOP   db 'unloop',  0
 nm_HERE     db 'here',    0
 nm_MEM      db 'mem',     0
 nm_COMMA    db ',',       0
@@ -1206,10 +1264,12 @@ nm_SYSCALL5 db 'syscall5', 0
 nm_SYSCALL6 db 'syscall6', 0
 
 align 8
+execBuf     dq 0, 0, 0, 0
 dStack      rq 256
 rStack      rq 256
 tStack      rq 64
+lStack      rq 64
 
-THE_CODE:   rb CODE_SZ
 THE_DICT:   rb DICT_SZ
+THE_CODE:   rb CODE_SZ
 THE_ROM = boot
