@@ -598,10 +598,10 @@ doSeqI:
     jmp     .loop
 .notequal:
     xor     rax, rax
-    doNext
+    ret
 .equal:
     mov     rax, -1
-    doNext
+    ret
 
 p_SEQI:
     call doSeqI
@@ -934,10 +934,10 @@ isSemi:
 
 retTrue:
     stc
-    doNext
+    ret
 retFalse:
     clc
-    doNext
+    ret
 
 ; outer(rdi = source string)
 ; Saves/restores TOIN.  Loop: call next-word; if WD empty, done; else print it.
@@ -1020,7 +1020,7 @@ outer:
     call    doCount
     call    doType
     call    doCR
-    jmp     .loop
+    ; fall through to done
 
 .done:
     pop     qword [TOIN]        ; restore TOIN
@@ -1069,7 +1069,7 @@ addDictEntry:
     lea     rdi, [rbx + DE_NAME_OFFSET]
     mov     rcx, rdx
     rep movsb
-    doNext
+    ret
 
 ; initDict - walk primTable, call addDictEntry for each {name,xt} pair
 initDict:
@@ -1086,7 +1086,7 @@ initDict:
     add     r8, 16
     jmp     .loop
 .done:
-    doNext
+    ret
 
 primTable:
     dq nm_EXIT,      p_EXIT
