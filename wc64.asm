@@ -77,8 +77,8 @@ macro lPop reg {
 }
 
 macro doNext {
-    ret
-    ;jmp interpret
+    ;ret
+    jmp interpret
 }
 
 ; ******************************************************************************
@@ -119,9 +119,9 @@ interpret:
 
     cmp     rbx, primEnd        ; Primitive? (30% - most common non-XT exit)
     jnb     .chklit
-    ;jmp     rbx                 ; Execute primitive
-    call    rbx                 ; Execute primitive
-    jmp     interpret
+    jmp     rbx                 ; Execute primitive
+    ;call    rbx                 ; Execute primitive
+    ;jmp     interpret
 
 .chklit:
     test    rbx, rbx            ; Literal? bit63 set (10%)
