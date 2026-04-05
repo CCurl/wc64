@@ -86,7 +86,6 @@ macro doNext {
 ; ******************************************************************************
 main:
     ; Initialize
-    mov     [InitialRSP], rsp
     mov     rbx, THE_CODE
     mov     [HERE], rbx
     
@@ -389,14 +388,9 @@ p_UNLOOP: ; ( -- )  unwind the loop stack frame
     doNext
 
 ; Code pointer
-p_PHERE:
-    lea     rbx, [HERE]
-    sPush   rbx
-    doNext
+; p_PHERE - now a tagged address literal in primTable
 
-p_MEM:
-    sPush   THE_CODE
-    doNext
+; p_MEM - now a tagged address literal in primTable
 
 doComma:
     sPop    rbx
@@ -428,24 +422,13 @@ p_LITCOMMA:
     doNext
 
 ; Dictionary
-p_PLAST:
-    lea     rbx, [LAST]
-    sPush   rbx
-    doNext
-
-p_BASE:
-    lea     rbx, [BASE]
-    sPush   rbx
-    doNext
+; p_PLAST - now a tagged address literal in primTable
 
 p_CELL:
     sPush   CELL_SZ
     doNext
 
-p_STATE:
-    lea     rbx, [STATE]
-    sPush   rbx
-    doNext
+; p_STATE - now a tagged address literal in primTable
 
 ; Add next word to dictionary ( -- )
 ; XT = HERE (captured by addDictEntry)
@@ -1098,6 +1081,17 @@ initDict:
 .done:
     ret
 
+; Tagged addresses
+PLIT_ADDR = p_LIT + 0x8000000000000000
+
+; Tagged numeric values and addresses
+CELL_NUM = CELL_SZ + 0x8000000000000000
+H_ADDR = HERE + 0x8000000000000000
+L_ADDR = LAST + 0x8000000000000000
+MEM_ADDR = THE_CODE + 0x8000000000000000
+BASE_ADDR = BASE + 0x8000000000000000
+STATE_ADDR = STATE + 0x8000000000000000
+
 primTable:
     dq nm_EXIT,      p_EXIT
     dq nm_DUP,       p_DUP
@@ -1133,14 +1127,9 @@ primTable:
     dq nm_INDEX,     p_INDEX
     dq nm_NEXT,      p_NEXT
     dq nm_UNLOOP,    p_UNLOOP
-    dq nm_PHERE,     p_PHERE
-    dq nm_MEM,       p_MEM
     dq nm_COMMA,     p_COMMA
     dq nm_LITCOMMA,  p_LITCOMMA
-    dq nm_PLAST,     p_PLAST
-    dq nm_BASE,      p_BASE
     dq nm_CELL,      p_CELL
-    dq nm_STATE,     p_STATE
     dq nm_BRANCH,    p_BRANCH
     dq nm_ZBRANCH,   p_ZBRANCH
     dq nm_BYE,       p_BYE
@@ -1180,6 +1169,13 @@ primTable:
     dq nm_SYSCALL4,  p_SYSCALL4
     dq nm_SYSCALL5,  p_SYSCALL5
     dq nm_SYSCALL6,  p_SYSCALL6
+    ; Tagged numeric values and addresses
+    dq nm_PLIT,      PLIT_ADDR
+    dq nm_PHERE,     H_ADDR
+    dq nm_MEM,       MEM_ADDR
+    dq nm_PLAST,     L_ADDR
+    dq nm_BASE,      BASE_ADDR
+    dq nm_STATE,     STATE_ADDR
     dq 0, 0  ; end of table
 
 ; ******************************************************************************
@@ -1223,7 +1219,6 @@ bootErrLen  = $ - bootErrStr
 ; ******************************************************************************
 segment readable writable
 
-InitialRSP  dq 0
 HERE        dq THE_CODE
 LAST        dq THE_DICT + DICT_SZ
 BASE        dq 10
@@ -1232,9 +1227,8 @@ TOIN        dq 0
 
 WD          rb 32
 charBuf     db 0
-crStr       db 10
 
-; Primitive names
+; Names for primitives
 nm_EXIT      db 'exit',      0
 nm_DUP       db 'dup',       0
 nm_DROP      db 'drop',      0
@@ -1269,14 +1263,9 @@ nm_FOR       db 'for',       0
 nm_INDEX     db 'i',         0
 nm_NEXT      db 'next',      0
 nm_UNLOOP    db 'unloop',    0
-nm_PHERE     db '(h)',       0
-nm_PLAST     db '(l)',       0
-nm_MEM       db 'mem',       0
 nm_COMMA     db ',',         0
 nm_LITCOMMA  db 'lit,',      0
 nm_CELL      db 'cell',      0
-nm_BASE      db 'base',      0
-nm_STATE     db 'state',     0
 nm_BRANCH    db 'branch',    0
 nm_ZBRANCH   db '0branch',   0
 nm_BYE       db 'bye',       0
@@ -1316,6 +1305,13 @@ nm_SYSCALL3  db 'syscall3',  0
 nm_SYSCALL4  db 'syscall4',  0
 nm_SYSCALL5  db 'syscall5',  0
 nm_SYSCALL6  db 'syscall6',  0
+; Names for tagged values
+nm_PLIT      db '(lit)',     0
+nm_PHERE     db '(h)',       0
+nm_MEM       db 'mem',       0
+nm_PLAST     db '(l)',       0
+nm_BASE      db 'base',      0
+nm_STATE     db 'state',     0
 
 align 8
 execBuf     dq 0, 0, 0, 0

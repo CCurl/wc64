@@ -1,7 +1,7 @@
 # What is wc64?
 wc64 is a 64-bit implementation of Forth inspired by Tachyon, written for the FASM assembler.
 
-The executable is currently at about 5000 bytes.
+The executable is currently at about 5512 bytes.
 
 wc64 has a bunch of primitives and it:
 - has a minimal "outer loop"
@@ -10,12 +10,22 @@ wc64 has a bunch of primitives and it:
 - can make any syscall (with 0-6 arguments), and
 - automatically loads a 'boot-file' named 'wc64-boot.fth' if it exists.
 
-I am hoping I can do everything else in the high-level forth code.
+## Architecture Highlights
+- **Direct-threaded interpreter** with tail-call dispatch optimization (31.5% faster than traditional CALL/RET)
+- **Bit 63 tagging** for numeric literals and constants: enables unified dispatch through the interpreter
+- **Tagged constants** in primTable: `(lit)`, `(h)`, `mem`, `cell`, `(l)`, `base`, `state` are now compile-time constants rather than primitives
+
+### Tagged Constants Explanation
+The interpreter uses bit 63 as a marker to distinguish between different value types:
+- **Bit 63 = 0**: Code address (primitive or colon definition) → execute via `jmp`
+- **Bit 63 = 1**: Numeric literal or constant → extract value with `btr` and push to stack
+
+This unified approach eliminates special casing in the dictionary lookup and dispatch logic. Constants like `cell` (8) and address references like `(h)` are stored in primTable with bit 63 set, so they behave identically to numeric literals in code.
 
 ## Building wc64
 - On Linux, use make. Requires that `fasm` is installed.
 
-I actually directed Claude (Haiku 4.5 + Sonnet 4.5) to code most of it (with guidance from me), so I am hoping that it "understands" it well enough that it might be able to migrate it to another CPU/platform without too much trouble.
+I actually directed Claude (Haiku 4.5) to code most of it (with guidance from me), so I am hoping that it "understands" it well enough that it might be able to migrate it to another CPU/platform without too much trouble.
 
 ## Built-in primitives:
 
@@ -69,13 +79,17 @@ I actually directed Claude (Haiku 4.5 + Sonnet 4.5) to code most of it (with gui
 | r>   | (-- n) (R: n --)    | Pop from return stack |
 
 ### Literals & Code
-| Word | Stack     | Description |
-|------|-----------|------------------------------|
-| lit  | (-- n)    | Push next cell as literal |
-| lit, | (n --)    | Compile n as literal |
-| here | (-- addr) | Address of next code location |
-| mem  | (-- addr) | Base address of code memory |
-| ,    | (n --)    | Compile cell to HERE |
+| Word   | Stack     | Description |
+|--------|-----------|------------------------------|
+| lit    | (-- n)    | Push next cell as literal |
+| (lit)* | (-- addr) | Address of lit primitive (tagged constant) |
+| lit,   | (n --)    | Compile n as literal |
+| (h)*   | (-- addr) | Address of HERE variable (tagged constant) |
+| mem*   | (-- addr) | Base address of code memory (tagged constant) |
+| cell*  | (-- n)    | Size of a cell in bytes (tagged constant) |
+| ,      | (n --)    | Compile cell to HERE |
+
+\* *Indicates tagged constant: value is pushed directly via bit 63 tagging*
 
 ### I/O
 | Word | Stack         | Description |
@@ -88,10 +102,13 @@ I actually directed Claude (Haiku 4.5 + Sonnet 4.5) to code most of it (with gui
 ### Dictionary
 | Word     | Stack        | Description |
 |----------|--------------|------------------------------|
-| last     | (-- addr)    | Address of last dictionary entry |
-| base     | (-- addr)    | Current number base |
+| (l)*     | (-- addr)    | Address of LAST variable (tagged constant) |
+| base*    | (-- addr)    | Address of current number base variable (tagged constant) |
+| state*   | (-- addr)    | Address of compile/interpret state variable (tagged constant) |
 | find     | (cs -- addr) | Find word in dictionary (0 if not found) |
 | add-word | (--)         | Add the next word to dictionary |
+
+\* *Indicates tagged constant: value is pushed directly via bit 63 tagging*
 
 ### String Operations
 | Word      | Stack           | Description |
