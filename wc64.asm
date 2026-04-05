@@ -317,12 +317,13 @@ p_LIT:
 doEmit:
     sPop    rbx
     mov     [charBuf], bl
-    
-    mov     rax, 1              ; sys_write
+    mov     rdx, 1              ; length
+    mov     rsi, charBuf        ; address
     mov     rdi, 1              ; stdout
-    mov     rsi, charBuf
-    mov     rdx, 1
+    push    rax
+    mov     rax, 1              ; sys_write
     syscall
+    pop     rax
     ret
 
 p_EMIT:
@@ -332,10 +333,11 @@ p_EMIT:
 doType:
     sPop    rdx                 ; length
     sPop    rsi                 ; address
-    
-    mov     rax, 1              ; sys_write
     mov     rdi, 1              ; stdout
+    push    rax
+    mov     rax, 1              ; sys_write
     syscall
+    pop     rax
     ret
 
 p_TYPE:
@@ -343,14 +345,13 @@ p_TYPE:
     doNext
 
 p_KEY:
-    mov     rax, 0              ; sys_read
+    sPush   0                   ; placeholder for char
+    mov     rdx, 1              ; length
+    mov     rsi, charBuf        ; address
     xor     rdi, rdi            ; stdin
-    mov     rsi, charBuf
-    mov     rdx, 1
+    mov     rax, 0              ; sys_read
     syscall
-    
     movzx   rax, byte [charBuf]
-    sPush   rax
     doNext
 
 ; FOR/NEXT/I
@@ -388,8 +389,8 @@ p_UNLOOP: ; ( -- )  unwind the loop stack frame
     doNext
 
 ; Code pointer
-p_HERE:
-    mov     rbx, [HERE]
+p_PHERE:
+    lea     rbx, [HERE]
     sPush   rbx
     doNext
 
@@ -416,12 +417,10 @@ doLitComma:
     test    rax, rax
     js      .twocell
     bts     rax, 63             ; tag TOS in place
-    jmp     doComma              ; tail call
+    jmp     doComma             ; tail call
 .twocell:
-    sPop    rbx                 ; save n
     sPush   p_LIT
     call    doComma
-    sPush   rbx
     jmp     doComma             ; tail call
 
 p_LITCOMMA:
@@ -429,20 +428,30 @@ p_LITCOMMA:
     doNext
 
 ; Dictionary
-p_LAST:
-    mov     rbx, [LAST]
+p_PLAST:
+    lea     rbx, [LAST]
     sPush   rbx
     doNext
 
 p_BASE:
-    mov     rbx, [BASE]
+    lea     rbx, [BASE]
     sPush   rbx
     doNext
 
-; Add word to dictionary ( s1 -- )
+p_CELL:
+    sPush   CELL_SZ
+    doNext
+
+p_STATE:
+    lea     rbx, [STATE]
+    sPush   rbx
+    doNext
+
+; Add next word to dictionary ( -- )
 ; XT = HERE (captured by addDictEntry)
 p_ADDDICT:
-    sPop    rsi                 ; rsi = name string
+    call    doNextWord          ; get the next word
+    lea     rsi, [WD+1]         ; rsi = char area of WD
     call    addDictEntry        ; tail call
     doNext
 
@@ -467,7 +476,10 @@ p_BYE:
 
 doCR:
     sPush   10
-    jmp     doEmit
+    call    doEmit
+    sPush   13
+    call    doEmit
+    ret
 
 p_CR:
     call    doCR
@@ -654,6 +666,11 @@ p_NEXTWORD:
     call doNextWord
     doNext
 
+p_EXIT_A:
+    mov     rbx, p_EXIT
+    sPush   rbx
+    doNext
+
 ; find ( cs -- e )  search dictionary for counted string cs, return entry addr or 0
 ; cs points at length byte (WD); dict entries at DE_LEN_OFFSET are same format
 ; p_SEQI compares length bytes first - instant reject on mismatch
@@ -833,8 +850,8 @@ p_FCLOSE:
 p_FREAD:
     sPop    rdi                 ; rdi = fd
     sPop    rdx                 ; rdx = len
-    mov     rsi, rax            ; rsi = buf
-    mov     rax, 0              ; sys_read
+    sPop    rsi                 ; rsi = buf
+    sPush   0                   ; sys_read
     syscall                     ; rax = bytes read (new TOS)
     doNext
 
@@ -842,8 +859,8 @@ p_FREAD:
 p_FWRITE:
     sPop    rdi                 ; rdi = fd
     sPop    rdx                 ; rdx = len
-    mov     rsi, rax            ; rsi = buf
-    mov     rax, 1              ; sys_write
+    sPop    rsi                 ; rsi = buf
+    sPush   1                   ; sys_write
     syscall                     ; rax = bytes written (new TOS)
     doNext
 
@@ -922,19 +939,17 @@ isColon:
     cmp     byte [WD], 1        ; length == 1?
     jne     retFalse
     cmp     byte [WD+1], ':'    ; first char == ':'?
-    je      retTrue
     jne     retFalse
+retTrue:
+    stc
+    ret
 
 ; isSemi set the carry flag if WD is a semicolon
 isSemi:
     cmp     byte [WD], 1        ; length == 1?
     jne     retFalse
     cmp     byte [WD+1], ';'    ; first char == ';'?
-    jne     retFalse
-
-retTrue:
-    stc
-    ret
+    je      retTrue
 retFalse:
     clc
     ret
@@ -996,19 +1011,14 @@ outer:
     jmp     .loop
 
 .interp:
-    cmp     rdx, primEnd        ; primitive?
-    jb      .prim
     xor     rbx, rbx
     rPush   rbx                 ; NULL sentinel so interpret exits cleanly
-    push    r15                 ; save outer IP
     mov     [execBuf], rdx
     mov     [execBuf+8], p_EXIT ; return to EXIT when done
+    push    r15                 ; save outer IP
     lea     r15, [execBuf]
     call    interpret
     pop     r15                 ; restore outer IP
-    jmp     .loop
-.prim:
-    call    rdx
     jmp     .loop
 
 .notfound:
@@ -1123,12 +1133,14 @@ primTable:
     dq nm_INDEX,     p_INDEX
     dq nm_NEXT,      p_NEXT
     dq nm_UNLOOP,    p_UNLOOP
-    dq nm_HERE,      p_HERE
+    dq nm_PHERE,     p_PHERE
     dq nm_MEM,       p_MEM
     dq nm_COMMA,     p_COMMA
     dq nm_LITCOMMA,  p_LITCOMMA
-    dq nm_LAST,      p_LAST
+    dq nm_PLAST,     p_PLAST
     dq nm_BASE,      p_BASE
+    dq nm_CELL,      p_CELL
+    dq nm_STATE,     p_STATE
     dq nm_BRANCH,    p_BRANCH
     dq nm_ZBRANCH,   p_ZBRANCH
     dq nm_BYE,       p_BYE
@@ -1152,6 +1164,7 @@ primTable:
     dq nm_TOIN,      p_TOIN
     dq nm_WD,        p_WD
     dq nm_NEXTWORD,  p_NEXTWORD
+    dq nm_EXIT_A,    p_EXIT_A
     dq nm_ISNUM,     p_ISNUM
     dq nm_IMMEDIATE, p_IMMEDIATE
     dq nm_COUNT,     p_COUNT
@@ -1176,41 +1189,34 @@ primTable:
 ; boot - open wc64-boot.fth, read into THE_CODE+100000, call outer
 ; Runs as threaded code via THE_ROM
 boot:
-    dq p_LIT, bootFile, p_LIT, 0       ; ( name O_RDONLY )
-    dq p_FOPEN                         ; ( fd )
-    dq p_DUP, p_LIT, 0, p_LESS         ; ( fd fd<0 )
+    dq p_LIT, bootFile, p_LIT, 0       ; ( -- name O_RDONLY )
+    dq p_FOPEN                         ; ( nm mode -- fd )
+    dq p_DUP, p_LIT, 0, p_LESS         ; ( fd -- fd fd<0 )
     dq p_ZBRANCH, boot_ok
     dq p_DROP
     dq p_LIT, bootErrStr, p_LIT, bootErrLen, p_TYPE
-    dq p_TSPD, p_BYE
+    dq p_BYE
 boot_ok:
-    dq p_XSTO                          ; x = fd
-    dq p_LIT, THE_CODE+100000
-    dq p_LIT, bootBufSz
-    dq p_XFET, p_FREAD                 ; ( n )  bytes read
-    dq p_DUP, p_LIT, 0, p_LESS         ; ( n n<0 )
+    dq p_XSTO                          ; x! (the fd)
+    dq p_LIT, THE_CODE+100000, p_YSTO  ; buffer adder in Y
+    dq p_YFET, p_LIT, 100000, p_XFET   ; ( -- addr size fd )
+    dq p_FREAD                         ; ( addr size fd -- bytes )
+    dq p_DUP, p_LIT, 0, p_LESS         ; ( bytes -- bytes bytes<0 )
     dq p_ZBRANCH, boot_read_ok
     dq p_DROP
     dq p_LIT, bootErrStr, p_LIT, bootErrLen, p_TYPE
-    dq p_TSPD, p_BYE
+    dq p_BYE
 boot_read_ok:
-    dq p_DROP
     dq p_XFET, p_FCLOSE                ; close fd
-    ; null-terminate the buffer
-    dq p_LIT, THE_CODE+100000
-    dq p_SLEN
-    dq p_LIT, THE_CODE+100000
-    dq p_PLUS                          ; ( end_addr )
-    dq p_LIT, 0, p_SWAP, p_CSTORE      ; [end] = 0
+    dq p_YFET, p_PLUS, p_LIT, 0        ; ( bytes -- end 0 )
+    dq p_SWAP, p_CSTORE                ; ensure null-terminated
     ; call outer with the buffer
-    dq p_LIT, THE_CODE+100000
-    dq p_OUTER
-    dq p_TSPD, p_BYE
+    dq p_YFET, p_OUTER                 ; ( -- )
+    dq p_BYE
 
 bootFile    db 'wc64-boot.fth', 0
 bootErrStr  db 'Error: cannot open wc64-boot.fth', 10
 bootErrLen  = $ - bootErrStr
-bootBufSz   = CODE_SZ - 100000
 
 ; ******************************************************************************
 ; Data segment
@@ -1229,84 +1235,87 @@ charBuf     db 0
 crStr       db 10
 
 ; Primitive names
-nm_EXIT     db 'exit',    0
-nm_DUP      db 'dup',     0
-nm_DROP     db 'drop',    0
-nm_SWAP     db 'swap',    0
-nm_OVER     db 'over',    0
-nm_PLUS     db '+',       0
-nm_MINUS    db '-',       0
-nm_MULT     db '*',       0
-nm_DIVMOD   db '/mod',    0
-nm_INC      db '1+',      0
-nm_DEC      db '1-',      0
-nm_NEG      db 'negate',  0
-nm_AND      db 'and',     0
-nm_OR       db 'or',      0
-nm_XOR      db 'xor',     0
-nm_INVERT   db 'invert',  0
-nm_EQUAL    db '=',       0
-nm_LESS     db '<',       0
-nm_GREATER  db '>',       0
-nm_FETCH    db '@',       0
-nm_STORE    db '!',       0
-nm_CFETCH   db 'c@',      0
-nm_CSTORE   db 'c!',      0
-nm_TOR      db '>r',      0
-nm_FROMR    db 'r>',      0
-nm_RFETCH   db 'r@',      0
-nm_LIT      db 'lit',     0
-nm_EMIT     db 'emit',    0
-nm_TYPE     db 'type',    0
-nm_KEY      db 'key',     0
-nm_FOR      db 'for',     0
-nm_INDEX    db 'i',       0
-nm_NEXT     db 'next',    0
-nm_UNLOOP   db 'unloop',  0
-nm_HERE     db 'here',    0
-nm_MEM      db 'mem',     0
-nm_COMMA    db ',',       0
-nm_LITCOMMA db 'lit,',    0
-nm_LAST     db 'last',    0
-nm_BASE     db 'base',    0
-nm_BRANCH   db 'branch',  0
-nm_ZBRANCH  db '0branch', 0
-nm_BYE      db 'bye',     0
-nm_CR       db 'cr',      0
-nm_TSPI     db '+L',      0
-nm_TSPD     db '-L',      0
-nm_XFET     db 'x@',      0
-nm_XSTO     db 'x!',      0
-nm_XFETI    db 'x@+',     0
-nm_YFET     db 'y@',      0
-nm_YSTO     db 'y!',      0
-nm_YFETI    db 'y@+',     0
-nm_ZFET     db 'z@',      0
-nm_ZSTO     db 'z!',      0
-nm_ZFETI    db 'z@+',     0
-nm_SLEN     db 's-len',   0
-nm_LCASE    db 'lcase',   0
-nm_SEQI     db 's-eqi',   0
-nm_FIND     db 'find',    0
-nm_ADDDICT  db 'add-word',0
-nm_TOIN     db '>in',     0
-nm_WD       db 'wd',      0
-nm_NEXTWORD db 'next-word',0
-nm_ISNUM    db 'is-num',   0
-nm_IMMEDIATE db 'immediate',0
-nm_COUNT    db 'count',    0
-nm_FOPEN    db 'fopen',    0
-nm_FCLOSE   db 'fclose',   0
-nm_FREAD    db 'fread',    0
-nm_FWRITE   db 'fwrite',   0
-nm_OUTER    db 'outer',    0
-nm_SYSCALL0 db 'syscall0', 0
-nm_SYSCALL1 db 'syscall1', 0
-nm_SYSCALL2 db 'syscall2', 0
-nm_SYSCALL3 db 'syscall3', 0
-nm_SYSCALL4 db 'syscall4', 0
-nm_SYSCALL5 db 'syscall5', 0
-nm_SYSCALL6 db 'syscall6', 0
+nm_EXIT      db 'exit',      0
+nm_DUP       db 'dup',       0
+nm_DROP      db 'drop',      0
+nm_SWAP      db 'swap',      0
+nm_OVER      db 'over',      0
+nm_PLUS      db '+',         0
+nm_MINUS     db '-',         0
+nm_MULT      db '*',         0
+nm_DIVMOD    db '/mod',      0
+nm_INC       db '1+',        0
+nm_DEC       db '1-',        0
+nm_NEG       db 'negate',    0
+nm_AND       db 'and',       0
+nm_OR        db 'or',        0
+nm_XOR       db 'xor',       0
+nm_INVERT    db 'invert',    0
+nm_EQUAL     db '=',         0
+nm_LESS      db '<',         0
+nm_GREATER   db '>',         0
+nm_FETCH     db '@',         0
+nm_STORE     db '!',         0
+nm_CFETCH    db 'c@',        0
+nm_CSTORE    db 'c!',        0
+nm_TOR       db '>r',        0
+nm_FROMR     db 'r>',        0
+nm_RFETCH    db 'r@',        0
+nm_LIT       db 'lit',       0
+nm_EMIT      db 'emit',      0
+nm_TYPE      db 'type',      0
+nm_KEY       db 'key',       0
+nm_FOR       db 'for',       0
+nm_INDEX     db 'i',         0
+nm_NEXT      db 'next',      0
+nm_UNLOOP    db 'unloop',    0
+nm_PHERE     db '(h)',       0
+nm_PLAST     db '(l)',       0
+nm_MEM       db 'mem',       0
+nm_COMMA     db ',',         0
+nm_LITCOMMA  db 'lit,',      0
+nm_CELL      db 'cell',      0
+nm_BASE      db 'base',      0
+nm_STATE     db 'state',     0
+nm_BRANCH    db 'branch',    0
+nm_ZBRANCH   db '0branch',   0
+nm_BYE       db 'bye',       0
+nm_CR        db 'cr',        0
+nm_TSPI      db '+L',        0
+nm_TSPD      db '-L',        0
+nm_XFET      db 'x@',        0
+nm_XSTO      db 'x!',        0
+nm_XFETI     db 'x@+',       0
+nm_YFET      db 'y@',        0
+nm_YSTO      db 'y!',        0
+nm_YFETI     db 'y@+',       0
+nm_ZFET      db 'z@',        0
+nm_ZSTO      db 'z!',        0
+nm_ZFETI     db 'z@+',       0
+nm_SLEN      db 's-len',     0
+nm_LCASE     db 'lcase',     0
+nm_SEQI      db 's-eqi',     0
+nm_FIND      db 'find',      0
+nm_ADDDICT   db 'add-word',  0
+nm_TOIN      db '>in',       0
+nm_WD        db 'wd',        0
+nm_NEXTWORD  db 'next-word', 0
+nm_EXIT_A    db '(exit)',    0
+nm_ISNUM     db 'is-num',    0
+nm_IMMEDIATE db 'immediate', 0
+nm_COUNT     db 'count',     0
+nm_FOPEN     db 'fopen',     0
+nm_FCLOSE    db 'fclose',    0
+nm_FREAD     db 'fread',     0
+nm_FWRITE    db 'fwrite',    0
+nm_OUTER     db 'outer',     0
+nm_SYSCALL0  db 'syscall0',  0
+nm_SYSCALL1  db 'syscall1',  0
+nm_SYSCALL2  db 'syscall2',  0
+nm_SYSCALL3  db 'syscall3',  0
+nm_SYSCALL4  db 'syscall4',  0
+nm_SYSCALL5  db 'syscall5',  0
+nm_SYSCALL6  db 'syscall6',  0
 
 align 8
 execBuf     dq 0, 0, 0, 0
