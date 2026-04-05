@@ -12,10 +12,11 @@ entry main
 ; ******************************************************************************
 ; TOS  = rax         Top of data stack (caller-saved, efficient)
 ; STKP = rbp         Data stack pointer (callee-saved)
-; PCIP = r15         Forth instruction pointer (callee-saved)
+; LSP  = r12         Loop stack pointer (callee-saved)
 ; RSP  = r13         Return stack pointer (callee-saved)
 ; TSP  = r14         Temp/locals stack pointer (callee-saved)
-; Scratch: rbx, rcx, rdx, rsi, rdi, r8-r12
+; PCIP = r15         Forth instruction pointer (callee-saved)
+; Scratch: rbx, rcx, rdx, rsi, rdi, r8-r11
 
 ; ******************************************************************************
 ; Constants
@@ -65,6 +66,22 @@ macro rPop reg {
 }
 
 ; ******************************************************************************
+macro lPush val {
+    add     r12, CELL_SZ
+    mov     [r12], val
+}
+
+macro lPop reg {
+    mov     reg, [r12]
+    sub     r12, CELL_SZ
+}
+
+macro doNext {
+    ;ret
+    jmp interpret
+}
+
+; ******************************************************************************
 ; Main Entry Point
 ; ******************************************************************************
 main:
@@ -73,7 +90,7 @@ main:
     mov     rbx, THE_CODE
     mov     [HERE], rbx
     
-    ; Initialize stacks
+    ; Initialize stacks (except r12, which needs to be set after initDict)
     mov     r13, rStack         ; Return stack
     mov     rbp, dStack         ; Data stack
     mov     r14, tStack         ; Temp/locals stack
@@ -82,18 +99,18 @@ main:
     ; Initialize dictionary with primitives
     call    initDict
 
+    ; Initialize r12 AFTER initDict to ensure it's not clobbered
+    mov     r12, lStack         ; Loop stack
+
     mov     r15, THE_ROM        ; Instruction pointer
     
     ; Jump to interpreter
     call    interpret
-    call    p_BYE
+    jmp     p_BYE
 
 ; ******************************************************************************
 ; Inner Interpreter (threaded code)
 ; ******************************************************************************
-primDispatch:
-    call    rbx                 ; Execute primitive, fall through to interpret
-
 interpret:
     test    r15, r15            ; Check for end of code (NULL)
     jz      .done
@@ -101,9 +118,14 @@ interpret:
     add     r15, CELL_SZ        ; Advance IP
 
     cmp     rbx, primEnd        ; Primitive? (30% - most common non-XT exit)
-    jb      primDispatch
+    jnb     .chklit
+    jmp     rbx                 ; Execute primitive
+    ;call    rbx                 ; Execute primitive
+    ;jmp     interpret
 
-    js      .number             ; Literal? bit63 set (10%)
+.chklit:
+    test    rbx, rbx            ; Literal? bit63 set (10%)
+    js      .number
 
     ; Colon definition (60% = 50% XT + 10% TCO) - falls through
     cmp     qword [r15], p_EXIT ; tail call?
@@ -131,17 +153,17 @@ p_EXIT:
     cmp     r13, rStack         ; Check return stack underflow
     jng     .underflow
     rPop    r15                 ; Restore IP
-    ret
+    doNext
 .underflow:
     ; Return stack underflow
     mov     r13, rStack
     xor     r15, r15            ; NULL IP to trigger exit
-    ret
+    doNext
 
 ; Stack manipulation
 p_DUP:
     sPush   rax
-    ret
+    doNext
 
 p_DROP:
     mov     rax, [rbp]
@@ -150,34 +172,34 @@ p_DROP:
     jge     .ok
     mov     rbp, dStack
 .ok:
-    ret
+    doNext
 
 p_SWAP:
     mov     rbx, [rbp]
     mov     [rbp], rax
     mov     rax, rbx
-    ret
+    doNext
 
 p_OVER:
     mov     rbx, [rbp]
     sPush   rbx
-    ret
+    doNext
 
 ; Arithmetic
 p_PLUS:
     sPop    rbx
     add     rax, rbx
-    ret
+    doNext
 
 p_MINUS:
     sPop    rbx
     sub     rax, rbx
-    ret
+    doNext
 
 p_MULT:
     sPop    rbx
     imul    rax, rbx
-    ret
+    doNext
 
 p_DIVMOD:
     sPop    rbx                 ; divisor
@@ -189,41 +211,41 @@ p_DIVMOD:
     idiv    rbx
     sPush   rdx                 ; remainder
     ; rax already has quotient
-    ret
+    doNext
 .zero:
-    ret
+    doNext
 
 p_INC:
     inc     rax
-    ret
+    doNext
 
 p_DEC:
     dec     rax
-    ret
+    doNext
 
 p_NEG:
     neg     rax
-    ret
+    doNext
 
 ; Logical
 p_AND:
     sPop    rbx
     and     rax, rbx
-    ret
+    doNext
 
 p_OR:
     sPop    rbx
     or      rax, rbx
-    ret
+    doNext
 
 p_XOR:
     sPop    rbx
     xor     rax, rbx
-    ret
+    doNext
 
 p_INVERT:
     not     rax
-    ret
+    doNext
 
 ; Comparison
 p_EQUAL:
@@ -231,109 +253,152 @@ p_EQUAL:
     cmp     rax, rbx
     mov     rax, 0
     sete    al
-    ret
+    doNext
 
 p_LESS:
     sPop    rbx
     cmp     rax, rbx
     mov     rax, 0
     setl    al
-    ret
+    doNext
 
 p_GREATER:
     sPop    rbx
     cmp     rax, rbx
     mov     rax, 0
     setg    al
-    ret
+    doNext
 
 ; Memory access
 p_FETCH:
     mov     rax, [rax]
-    ret
+    doNext
 
 p_STORE:
     sPop    rbx                 ; address
     sPop    rcx                 ; value
     mov     [rbx], rcx
-    ret
+    doNext
 
 p_CFETCH:
     movzx   rax, byte [rax]
-    ret
+    doNext
 
 p_CSTORE:
     sPop    rbx                 ; address
     sPop    rcx                 ; value
     mov     [rbx], cl
-    ret
+    doNext
 
 ; Return stack
 p_TOR:
     sPop    rbx
     rPush   rbx
-    ret
+    doNext
 
 p_FROMR:
     rPop    rbx
     sPush   rbx
-    ret
+    doNext
 
 p_RFETCH:
     mov     rbx, [r13]
     sPush   rbx
-    ret
+    doNext
 
 ; Literals
 p_LIT:
     mov     rbx, [r15]
     add     r15, CELL_SZ
     sPush   rbx
-    ret
+    doNext
 
 ; I/O
-p_EMIT:
+doEmit:
     sPop    rbx
     mov     [charBuf], bl
-    
-    mov     rax, 1              ; sys_write
+    mov     rdx, 1              ; length
+    mov     rsi, charBuf        ; address
     mov     rdi, 1              ; stdout
-    mov     rsi, charBuf
-    mov     rdx, 1
+    push    rax
+    mov     rax, 1              ; sys_write
     syscall
+    pop     rax
+    ret
+
+p_EMIT:
+    call    doEmit
+    doNext
+
+doType:
+    sPop    rdx                 ; length
+    sPop    rsi                 ; address
+    mov     rdi, 1              ; stdout
+    push    rax
+    mov     rax, 1              ; sys_write
+    syscall
+    pop     rax
     ret
 
 p_TYPE:
-    sPop    rdx                 ; length
-    sPop    rsi                 ; address
-    
-    mov     rax, 1              ; sys_write
-    mov     rdi, 1              ; stdout
-    syscall
-    ret
+    call    doType
+    doNext
 
 p_KEY:
-    mov     rax, 0              ; sys_read
+    sPush   0                   ; placeholder for char
+    mov     rdx, 1              ; length
+    mov     rsi, charBuf        ; address
     xor     rdi, rdi            ; stdin
-    mov     rsi, charBuf
-    mov     rdx, 1
+    mov     rax, 0              ; sys_read
     syscall
-    
     movzx   rax, byte [charBuf]
-    sPush   rax
-    ret
+    doNext
+
+; FOR/NEXT/I
+p_FOR: ; ( limit-- ), index goes from 0 to limit-1
+    sPop    rbx                 ; limit
+    lPush   r15                 ; start -> loop stack
+    lPush   rbx                 ; limit -> loop stack
+    xor     r11, r11
+    lPush   r11                 ; index -> loop stack
+    doNext
+
+p_INDEX: ; ( -- index)
+    mov     r11, [r12]          ; index
+    sPush   r11                 ; push index onto stack
+    doNext
+
+p_NEXT: ; ( -- )
+    mov     r11, [r12]          ; index
+    inc     r11
+    cmp     r11, [r12-8]        ; limit
+    jge     p_UNLOOP
+    mov     [r12], r11
+    mov     r15, [r12-16]       ; restart loop
+    doNext
+
+p_UNLOOP: ; ( -- )  unwind the loop stack frame
+    lPop    rbx                 ; discard index
+    lPop    rbx                 ; discard limit
+    lPop    rbx                 ; discard start
+    cmp     r12, lStack         ; Check loop stack underflow
+    jge     .lDone
+    mov     r12, lStack
+.lDone:
+    mov     r11, [r12]
+    doNext
 
 ; Code pointer
-p_HERE:
-    mov     rbx, [HERE]
+p_PHERE:
+    lea     rbx, [HERE]
     sPush   rbx
-    ret
+    doNext
 
 p_MEM:
     sPush   THE_CODE
-    ret
+    doNext
 
-p_COMMA:
+doComma:
     sPop    rbx
     mov     rcx, [HERE]
     mov     [rcx], rbx
@@ -341,66 +406,84 @@ p_COMMA:
     mov     [HERE], rcx
     ret
 
+p_COMMA:
+    call    doComma
+    doNext
+
 ; lit, ( n -- )  compile n as a literal into HERE
 ; if bit63 clear: tag n and compile as single cell
 ; if bit63 set:   compile p_LIT + n (2 cells)
-p_LITCOMMA:
+doLitComma:
     test    rax, rax
     js      .twocell
     bts     rax, 63             ; tag TOS in place
-    jmp     p_COMMA             ; tail call
+    jmp     doComma             ; tail call
 .twocell:
-    sPop    rbx                 ; save n
     sPush   p_LIT
-    call    p_COMMA
-    sPush   rbx
-    call    p_COMMA
-    ret
+    call    doComma
+    jmp     doComma             ; tail call
+
+p_LITCOMMA:
+    call    doLitComma
+    doNext
 
 ; Dictionary
-p_LAST:
-    mov     rbx, [LAST]
+p_PLAST:
+    lea     rbx, [LAST]
     sPush   rbx
-    ret
+    doNext
 
 p_BASE:
-    mov     rbx, [BASE]
+    lea     rbx, [BASE]
     sPush   rbx
-    ret
+    doNext
 
-; Add word to dictionary ( s1 -- )
+p_CELL:
+    sPush   CELL_SZ
+    doNext
+
+p_STATE:
+    lea     rbx, [STATE]
+    sPush   rbx
+    doNext
+
+; Add next word to dictionary ( -- )
 ; XT = HERE (captured by addDictEntry)
 p_ADDDICT:
-    sPop    rsi                 ; rsi = name string
-    jmp     addDictEntry        ; tail call
+    call    doNextWord          ; get the next word
+    lea     rsi, [WD+1]         ; rsi = char area of WD
+    call    addDictEntry        ; tail call
+    doNext
 
 ; Control flow
 p_BRANCH:
     mov     rbx, [r15]
     mov     r15, rbx
-    ret
+    doNext
 
 p_ZBRANCH:
     sPop    rbx
     test    rbx, rbx
     jz      p_BRANCH
     add     r15, CELL_SZ
-    ret
+    doNext
 
 ; System
 p_BYE:
     mov     rax, 60             ; sys_exit
     xor     rdi, rdi            ; exit code 0
     syscall
+
+doCR:
+    sPush   10
+    call    doEmit
+    sPush   13
+    call    doEmit
     ret
 
 p_CR:
-    mov     rax, 1
-    mov     rdi, 1
-    mov     rsi, crStr
-    mov     rdx, 1
-    syscall
-    ret
+    call    doCR
+    doNext
 
 ; Locals (temp stack) frame ops
 ; r14 points directly to current frame's x slot; [r14]=x, [r14+8]=y, [r14+16]=z
@@ -414,7 +497,7 @@ p_TSPI:
     jg      .overflow
     mov     r14, rbx
 .overflow:
-    ret
+    doNext
 
 ; -L - free locals frame ( -- )
 p_TSPD:
@@ -424,61 +507,61 @@ p_TSPD:
     jl      .underflow
     mov     r14, rbx
 .underflow:
-    ret
+    doNext
 
 ; x@ - fetch locals x slot ( -- x )
 p_XFET:
     sPush   [r14]
-    ret
+    doNext
 
 ; x! - store to locals x slot ( n -- )
 p_XSTO:
     sPop    rbx
     mov     [r14], rbx
-    ret
+    doNext
 
 ; x@+ fetch locals x slot then increment ( -- x )
 p_XFETI:
     mov     rbx, [r14]
     inc     qword [r14]
     sPush   rbx
-    ret
+    doNext
 
 ; y@ - fetch locals y slot ( -- y )
 p_YFET:
     sPush   [r14 + CELL_SZ]
-    ret
+    doNext
 
 ; y! - store to locals y slot ( n -- )
 p_YSTO:
     sPop    rbx
     mov     [r14 + CELL_SZ], rbx
-    ret
+    doNext
 
 ; y@+ fetch locals y slot then increment ( -- y )
 p_YFETI:
     mov     rbx, [r14 + CELL_SZ]
     inc     qword [r14 + CELL_SZ]
     sPush   rbx
-    ret
+    doNext
 
 ; z@ - fetch locals z slot ( -- z )
 p_ZFET:
     sPush   [r14 + 2*CELL_SZ]
-    ret
+    doNext
 
 ; z! - store to locals z slot ( n -- )
 p_ZSTO:
     sPop    rbx
     mov     [r14 + 2*CELL_SZ], rbx
-    ret
+    doNext
 
 ; z@+ fetch locals z slot then increment ( -- z )
 p_ZFETI:
     mov     rbx, [r14 + 2*CELL_SZ]
     inc     qword [r14 + 2*CELL_SZ]
     sPush   rbx
-    ret
+    doNext
 
 ; String length ( s1 -- n )
 p_SLEN:
@@ -490,10 +573,10 @@ p_SLEN:
     jmp     .loop
 .done:
     mov     rax, rcx
-    ret
+    doNext
 
 ; Make TOS lowercase ( c1 -- c2 )
-p_LCASE:
+doLCase:
     cmp     rax, 'A'
     jl      .done
     cmp     rax, 'Z'
@@ -502,18 +585,22 @@ p_LCASE:
 .done:
     ret
 
+p_LCASE:
+    call    doLCase
+    doNext
+
 ; Case-insensitive string equal ( s1 s2 -- f )  f: -1 equal, 0 not equal
 ; Uses r9/r10 as string pointers - does NOT clobber rsi or rdi
-p_SEQI:
+doSeqI:
     sPop    r9                  ; r9 = s2
     sPop    r10                 ; r10 = s1
     sPush   0                   ; make scratch space for use and result; set later to T/F
 .loop:
     movzx   rax, byte [r9]
-    call    p_LCASE
+    call    doLCase             ; al = lowercase char from s2
     mov     cl, al              ; cl = lowercase char from s2
     movzx   rax, byte [r10]
-    call    p_LCASE             ; al = lowercase char from s1
+    call    doLCase             ; al = lowercase char from s1
     cmp     al, cl
     jne     .notequal
     test    al, al              ; both zero = end of strings
@@ -528,19 +615,23 @@ p_SEQI:
     mov     rax, -1
     ret
 
+p_SEQI:
+    call doSeqI
+    doNext
+    
 ; >in ( -- a )  push address of the input pointer variable
 p_TOIN:
     sPush   TOIN
-    ret
+    doNext
 
 ; wd ( -- a )  push address of the word buffer
 p_WD:
     sPush   WD
-    ret
+    doNext
 
 ; next-word ( -- )  skip whitespace, parse next word from input into WD
 ; WD is a counted+null-terminated string: WD[0]=len, WD[1..len]=chars, WD[len+1]=0
-p_NEXTWORD:
+doNextWord:
     mov     rsi, [TOIN]         ; rsi = current input pointer
 .skip:
     cmp     byte [rsi], 0       ; end of input?
@@ -571,10 +662,19 @@ p_NEXTWORD:
     mov     byte [WD], 0        ; empty counted string
     ret
 
+p_NEXTWORD:
+    call doNextWord
+    doNext
+
+p_EXIT_A:
+    mov     rbx, p_EXIT
+    sPush   rbx
+    doNext
+
 ; find ( cs -- e )  search dictionary for counted string cs, return entry addr or 0
 ; cs points at length byte (WD); dict entries at DE_LEN_OFFSET are same format
 ; p_SEQI compares length bytes first - instant reject on mismatch
-p_FIND:
+doFind:
     mov     rsi, rax            ; rsi = cs (counted string ptr)
     xor     rax, rax            ; rax = 0 (sentinel + default not-found)
 
@@ -589,7 +689,7 @@ p_FIND:
     sPush   rsi                 ; s1 = search counted string (saves sentinel, TOS=rsi)
     lea     r8, [rbx + DE_LEN_OFFSET] ; r8 = s2 = entry counted string
     sPush   r8                  ; s2 on stack (saves rsi, TOS=r8)
-    call    p_SEQI              ; ( s1 s2 -- f )  length byte compared first
+    call    doSeqI              ; ( s1 s2 -- f )  length byte compared first
     sPop    r8                  ; r8=result (f), rax=0 (sentinel) restored
     test    r8, r8
     jnz     .found
@@ -602,15 +702,18 @@ p_FIND:
     mov     rax, rbx            ; return entry address
     ret
 
-.notfound:
-                                ; rax=0: either never matched or last p_SEQI returned 0
+.notfound:                      ; rax=0: either never matched or last p_SEQI returned 0
     ret
+
+p_FIND:
+    call    doFind
+    doNext
 
 ; is-num ( cs -- n true | false )
 ; cs is a counted string (WD); skips length byte, parses chars in BASE
 ; handles % binary, # decimal, $ hex, 'x' char literal
 ; returns n 1 on success, 0 on failure
-p_ISNUM:
+doIsNum:
     mov     rsi, rax            ; rsi = counted string ptr
     inc     rsi                 ; skip length byte, point at chars
     mov     rbx, [BASE]         ; rbx = base
@@ -704,18 +807,26 @@ p_ISNUM:
     xor     rax, rax            ; TOS = false
     ret
 
+p_ISNUM:
+    call    doIsNum
+    doNext
+
 ; immediate ( -- )  set IMMED flag on most recently defined word
 p_IMMEDIATE:
     mov     rbx, [LAST]
     or      byte [rbx + DE_FLAGS_OFFSET], 0x80
-    ret
+    doNext
 
 ; count ( cs -- str len )  split counted string into addr/len pair
-p_COUNT:
+doCount:
     movzx   rbx, byte [rax]     ; rbx = length
     inc     rax                 ; rax = char area (cs+1)
     sPush   rbx                 ; save str, TOS = len
     ret
+
+p_COUNT:
+    call    doCount
+    doNext
 
 ; fopen ( name flags -- fd )  sys_open; mode=0664 used when creating
 p_FOPEN:
@@ -724,7 +835,7 @@ p_FOPEN:
     mov     rdx, 0x1B4          ; mode = 0664
     mov     rax, 2              ; sys_open
     syscall                     ; rax = fd (new TOS)
-    ret
+    doNext
 
 ; fclose ( fd -- )  sys_close
 p_FCLOSE:
@@ -733,25 +844,25 @@ p_FCLOSE:
     mov     rax, 3              ; sys_close
     syscall
     pop     rax                 ; restore TOS
-    ret
+    doNext
 
 ; fread ( buf len fd -- n )  sys_read; returns bytes read
 p_FREAD:
     sPop    rdi                 ; rdi = fd
     sPop    rdx                 ; rdx = len
-    mov     rsi, rax            ; rsi = buf
-    mov     rax, 0              ; sys_read
+    sPop    rsi                 ; rsi = buf
+    sPush   0                   ; sys_read
     syscall                     ; rax = bytes read (new TOS)
-    ret
+    doNext
 
 ; fwrite ( buf len fd -- n )  sys_write; returns bytes written
 p_FWRITE:
     sPop    rdi                 ; rdi = fd
     sPop    rdx                 ; rdx = len
-    mov     rsi, rax            ; rsi = buf
-    mov     rax, 1              ; sys_write
+    sPop    rsi                 ; rsi = buf
+    sPush   1                   ; sys_write
     syscall                     ; rax = bytes written (new TOS)
-    ret
+    doNext
 
 ; outer ( str -- )  primitive wrapper: pop string, call outer
 ; syscall0-6 ( a1..aN n -- r )  raw Linux syscalls
@@ -759,20 +870,20 @@ p_FWRITE:
 ; TOS=n, [rbp]=aN, ..., [rbp-(N-1)*8]=a1
 p_SYSCALL0:
     syscall
-    ret
+    doNext
 
 p_SYSCALL1:
     mov     rdi, [rbp]              ; a1 (only arg, deepest)
     sub     rbp, CELL_SZ
     syscall
-    ret
+    doNext
 
 p_SYSCALL2:
     mov     rsi, [rbp]              ; a2 (last pushed)
     mov     rdi, [rbp-CELL_SZ]      ; a1 (first pushed)
     sub     rbp, 2*CELL_SZ
     syscall
-    ret
+    doNext
 
 p_SYSCALL3:
     mov     rdx, [rbp]              ; a3
@@ -780,7 +891,7 @@ p_SYSCALL3:
     mov     rdi, [rbp-2*CELL_SZ]    ; a1
     sub     rbp, 3*CELL_SZ
     syscall
-    ret
+    doNext
 
 p_SYSCALL4:
     mov     r10, [rbp]              ; a4
@@ -789,7 +900,7 @@ p_SYSCALL4:
     mov     rdi, [rbp-3*CELL_SZ]    ; a1
     sub     rbp, 4*CELL_SZ
     syscall
-    ret
+    doNext
 
 p_SYSCALL5:
     mov     r8,  [rbp]              ; a5
@@ -799,7 +910,7 @@ p_SYSCALL5:
     mov     rdi, [rbp-4*CELL_SZ]    ; a1
     sub     rbp, 5*CELL_SZ
     syscall
-    ret
+    doNext
 
 p_SYSCALL6:
     mov     r9,  [rbp]              ; a6
@@ -810,11 +921,12 @@ p_SYSCALL6:
     mov     rdi, [rbp-5*CELL_SZ]    ; a1
     sub     rbp, 6*CELL_SZ
     syscall
-    ret
+    doNext
 
 p_OUTER:
     sPop    rdi
-    jmp     outer               ; tail call
+    call    outer
+    doNext
 
 primEnd:
 
@@ -827,19 +939,17 @@ isColon:
     cmp     byte [WD], 1        ; length == 1?
     jne     retFalse
     cmp     byte [WD+1], ':'    ; first char == ':'?
-    je      retTrue
     jne     retFalse
+retTrue:
+    stc
+    ret
 
 ; isSemi set the carry flag if WD is a semicolon
 isSemi:
     cmp     byte [WD], 1        ; length == 1?
     jne     retFalse
     cmp     byte [WD+1], ';'    ; first char == ';'?
-    jne     retFalse
-
-retTrue:
-    stc
-    ret
+    je      retTrue
 retFalse:
     clc
     ret
@@ -851,7 +961,7 @@ outer:
     mov     [TOIN], rdi         ; point TOIN at input string
 
 .loop:
-    call    p_NEXTWORD
+    call    doNextWord          ; parse next word into WD
     cmp     byte [WD], 0        ; empty → end of input
     je      .done
 
@@ -862,18 +972,18 @@ outer:
 
     ; Is it a number?
     sPush   WD                  ; ( -- cs )  push WD counted-string address
-    call    p_ISNUM             ; ( cs -- n true|false )  leaves n or 0 on TOS
+    call    doIsNum             ; ( cs -- n true|false )  leaves n or 0 on TOS
     sPop    rbx                 ; (n true|false -- )  get the flag into rbx
     test    rbx, rbx            ; non-zero => is number
     jz      .notnum
     cmp     qword [STATE], 0    ; interpreting?
     je      .loop
-    call    p_LITCOMMA          ; compile number into code stream
+    call    doLitComma          ; compile number into code stream
     jmp     .loop
 
 .notnum: ; It is not a number, is it a WORD in the dictionary?
     sPush   WD                  ; ( -- cs )  push WD counted-string address
-    call    p_FIND              ; ( cs -- entry|0 )
+    call    doFind              ; ( cs -- entry|0 )
     sPop    rbx                 ; zero if not found
     test    rbx, rbx
     jz      .notfound
@@ -884,11 +994,11 @@ outer:
     test    byte [rbx + DE_FLAGS_OFFSET], 0x80 ; check immediate flag
     jnz     .interp
     sPush   rdx                 ; ( -- xt )  push XT of found word
-    call    p_COMMA             ; compile XT into code stream
+    call    doComma             ; compile XT into code stream
     jmp     .loop
 
 .colon:
-    call    p_NEXTWORD          ; get next word, which should be the new word's name
+    call    doNextWord          ; get next word, which should be the new word's name
     lea     rsi, [WD+1]         ; rsi = name char ptr
     call    addDictEntry        ; add new word to dictionary
     mov     [STATE], 1          ; switch to compiling
@@ -896,34 +1006,31 @@ outer:
 
 .semi:
     sPush   p_EXIT
-    call    p_COMMA             ; compile XT into code stream
+    call    doComma             ; compile XT into code stream
     mov     [STATE], 0          ; switch to interpreting
     jmp     .loop
 
 .interp:
-    cmp     rdx, primEnd        ; primitive?
-    jb      .prim
     xor     rbx, rbx
     rPush   rbx                 ; NULL sentinel so interpret exits cleanly
+    mov     [execBuf], rdx
+    mov     [execBuf+8], p_EXIT ; return to EXIT when done
     push    r15                 ; save outer IP
-    mov     r15, rdx
+    lea     r15, [execBuf]
     call    interpret
     pop     r15                 ; restore outer IP
-    jmp     .loop
-.prim:
-    call    rdx
     jmp     .loop
 
 .notfound:
     ; Not found: print it with a "?" prefix
     mov     [STATE], 0          ; switch to interpreting
     sPush   '?'
-    call    p_EMIT
+    call    doEmit
     sPush   WD
-    call    p_COUNT
-    call    p_TYPE
-    call    p_CR
-    jmp     .loop
+    call    doCount
+    call    doType
+    call    doCR
+    ; fall through to done
 
 .done:
     pop     qword [TOIN]        ; restore TOIN
@@ -1022,12 +1129,18 @@ primTable:
     dq nm_EMIT,      p_EMIT
     dq nm_TYPE,      p_TYPE
     dq nm_KEY,       p_KEY
-    dq nm_HERE,      p_HERE
+    dq nm_FOR,       p_FOR
+    dq nm_INDEX,     p_INDEX
+    dq nm_NEXT,      p_NEXT
+    dq nm_UNLOOP,    p_UNLOOP
+    dq nm_PHERE,     p_PHERE
     dq nm_MEM,       p_MEM
     dq nm_COMMA,     p_COMMA
     dq nm_LITCOMMA,  p_LITCOMMA
-    dq nm_LAST,      p_LAST
+    dq nm_PLAST,     p_PLAST
     dq nm_BASE,      p_BASE
+    dq nm_CELL,      p_CELL
+    dq nm_STATE,     p_STATE
     dq nm_BRANCH,    p_BRANCH
     dq nm_ZBRANCH,   p_ZBRANCH
     dq nm_BYE,       p_BYE
@@ -1051,6 +1164,7 @@ primTable:
     dq nm_TOIN,      p_TOIN
     dq nm_WD,        p_WD
     dq nm_NEXTWORD,  p_NEXTWORD
+    dq nm_EXIT_A,    p_EXIT_A
     dq nm_ISNUM,     p_ISNUM
     dq nm_IMMEDIATE, p_IMMEDIATE
     dq nm_COUNT,     p_COUNT
@@ -1075,42 +1189,34 @@ primTable:
 ; boot - open wc64-boot.fth, read into THE_CODE+100000, call outer
 ; Runs as threaded code via THE_ROM
 boot:
-    dq p_TSPI                           ; +L  (x=fd)
-    dq p_LIT, bootFile, p_LIT, 0       ; ( name O_RDONLY )
-    dq p_FOPEN                          ; ( fd )
-    dq p_DUP, p_LIT, 0, p_LESS         ; ( fd fd<0 )
+    dq p_LIT, bootFile, p_LIT, 0       ; ( -- name O_RDONLY )
+    dq p_FOPEN                         ; ( nm mode -- fd )
+    dq p_DUP, p_LIT, 0, p_LESS         ; ( fd -- fd fd<0 )
     dq p_ZBRANCH, boot_ok
     dq p_DROP
     dq p_LIT, bootErrStr, p_LIT, bootErrLen, p_TYPE
-    dq p_TSPD, p_BYE
+    dq p_BYE
 boot_ok:
-    dq p_XSTO                           ; x = fd
-    dq p_LIT, THE_CODE+100000
-    dq p_LIT, bootBufSz
-    dq p_XFET, p_FREAD                  ; ( n )  bytes read
-    dq p_DUP, p_LIT, 0, p_LESS         ; ( n n<0 )
+    dq p_XSTO                          ; x! (the fd)
+    dq p_LIT, THE_CODE+100000, p_YSTO  ; buffer adder in Y
+    dq p_YFET, p_LIT, 100000, p_XFET   ; ( -- addr size fd )
+    dq p_FREAD                         ; ( addr size fd -- bytes )
+    dq p_DUP, p_LIT, 0, p_LESS         ; ( bytes -- bytes bytes<0 )
     dq p_ZBRANCH, boot_read_ok
     dq p_DROP
     dq p_LIT, bootErrStr, p_LIT, bootErrLen, p_TYPE
-    dq p_TSPD, p_BYE
+    dq p_BYE
 boot_read_ok:
-    dq p_DROP
-    dq p_XFET, p_FCLOSE                 ; close fd
-    ; null-terminate the buffer
-    dq p_LIT, THE_CODE+100000
-    dq p_SLEN
-    dq p_LIT, THE_CODE+100000
-    dq p_PLUS                           ; ( end_addr )
-    dq p_LIT, 0, p_SWAP, p_CSTORE      ; [end] = 0
+    dq p_XFET, p_FCLOSE                ; close fd
+    dq p_YFET, p_PLUS, p_LIT, 0        ; ( bytes -- end 0 )
+    dq p_SWAP, p_CSTORE                ; ensure null-terminated
     ; call outer with the buffer
-    dq p_LIT, THE_CODE+100000
-    dq p_OUTER
-    dq p_TSPD, p_BYE
+    dq p_YFET, p_OUTER                 ; ( -- )
+    dq p_BYE
 
 bootFile    db 'wc64-boot.fth', 0
 bootErrStr  db 'Error: cannot open wc64-boot.fth', 10
 bootErrLen  = $ - bootErrStr
-bootBufSz   = CODE_SZ - 100000
 
 ; ******************************************************************************
 ; Data segment
@@ -1126,90 +1232,98 @@ TOIN        dq 0
 
 WD          rb 32
 charBuf     db 0
-spaceStr    db ' '
 crStr       db 10
-numBuf      rb 32
+
 ; Primitive names
-nm_EXIT     db 'exit',    0
-nm_DUP      db 'dup',     0
-nm_DROP     db 'drop',    0
-nm_SWAP     db 'swap',    0
-nm_OVER     db 'over',    0
-nm_PLUS     db '+',       0
-nm_MINUS    db '-',       0
-nm_MULT     db '*',       0
-nm_DIVMOD   db '/mod',    0
-nm_INC      db '1+',      0
-nm_DEC      db '1-',      0
-nm_NEG      db 'negate',  0
-nm_AND      db 'and',     0
-nm_OR       db 'or',      0
-nm_XOR      db 'xor',     0
-nm_INVERT   db 'invert',  0
-nm_EQUAL    db '=',       0
-nm_LESS     db '<',       0
-nm_GREATER  db '>',       0
-nm_FETCH    db '@',       0
-nm_STORE    db '!',       0
-nm_CFETCH   db 'c@',      0
-nm_CSTORE   db 'c!',      0
-nm_TOR      db '>r',      0
-nm_FROMR    db 'r>',      0
-nm_RFETCH   db 'r@',      0
-nm_LIT      db 'lit',     0
-nm_EMIT     db 'emit',    0
-nm_TYPE     db 'type',    0
-nm_KEY      db 'key',     0
-nm_HERE     db 'here',    0
-nm_MEM      db 'mem',     0
-nm_COMMA    db ',',       0
-nm_LITCOMMA db 'lit,',    0
-nm_LAST     db 'last',    0
-nm_BASE     db 'base',    0
-nm_BRANCH   db 'branch',  0
-nm_ZBRANCH  db '0branch', 0
-nm_BYE      db 'bye',     0
-nm_CR       db 'cr',      0
-nm_TSPI     db '+L',      0
-nm_TSPD     db '-L',      0
-nm_XFET     db 'x@',      0
-nm_XSTO     db 'x!',      0
-nm_XFETI    db 'x@+',     0
-nm_YFET     db 'y@',      0
-nm_YSTO     db 'y!',      0
-nm_YFETI    db 'y@+',     0
-nm_ZFET     db 'z@',      0
-nm_ZSTO     db 'z!',      0
-nm_ZFETI    db 'z@+',     0
-nm_SLEN     db 's-len',   0
-nm_LCASE    db 'lcase',   0
-nm_SEQI     db 's-eqi',   0
-nm_FIND     db 'find',    0
-nm_ADDDICT  db 'add-word',0
-nm_TOIN     db '>in',     0
-nm_WD       db 'wd',      0
-nm_NEXTWORD db 'next-word',0
-nm_ISNUM    db 'is-num',   0
-nm_IMMEDIATE db 'immediate',0
-nm_COUNT    db 'count',    0
-nm_FOPEN    db 'fopen',    0
-nm_FCLOSE   db 'fclose',   0
-nm_FREAD    db 'fread',    0
-nm_FWRITE   db 'fwrite',   0
-nm_OUTER    db 'outer',    0
-nm_SYSCALL0 db 'syscall0', 0
-nm_SYSCALL1 db 'syscall1', 0
-nm_SYSCALL2 db 'syscall2', 0
-nm_SYSCALL3 db 'syscall3', 0
-nm_SYSCALL4 db 'syscall4', 0
-nm_SYSCALL5 db 'syscall5', 0
-nm_SYSCALL6 db 'syscall6', 0
+nm_EXIT      db 'exit',      0
+nm_DUP       db 'dup',       0
+nm_DROP      db 'drop',      0
+nm_SWAP      db 'swap',      0
+nm_OVER      db 'over',      0
+nm_PLUS      db '+',         0
+nm_MINUS     db '-',         0
+nm_MULT      db '*',         0
+nm_DIVMOD    db '/mod',      0
+nm_INC       db '1+',        0
+nm_DEC       db '1-',        0
+nm_NEG       db 'negate',    0
+nm_AND       db 'and',       0
+nm_OR        db 'or',        0
+nm_XOR       db 'xor',       0
+nm_INVERT    db 'invert',    0
+nm_EQUAL     db '=',         0
+nm_LESS      db '<',         0
+nm_GREATER   db '>',         0
+nm_FETCH     db '@',         0
+nm_STORE     db '!',         0
+nm_CFETCH    db 'c@',        0
+nm_CSTORE    db 'c!',        0
+nm_TOR       db '>r',        0
+nm_FROMR     db 'r>',        0
+nm_RFETCH    db 'r@',        0
+nm_LIT       db 'lit',       0
+nm_EMIT      db 'emit',      0
+nm_TYPE      db 'type',      0
+nm_KEY       db 'key',       0
+nm_FOR       db 'for',       0
+nm_INDEX     db 'i',         0
+nm_NEXT      db 'next',      0
+nm_UNLOOP    db 'unloop',    0
+nm_PHERE     db '(h)',       0
+nm_PLAST     db '(l)',       0
+nm_MEM       db 'mem',       0
+nm_COMMA     db ',',         0
+nm_LITCOMMA  db 'lit,',      0
+nm_CELL      db 'cell',      0
+nm_BASE      db 'base',      0
+nm_STATE     db 'state',     0
+nm_BRANCH    db 'branch',    0
+nm_ZBRANCH   db '0branch',   0
+nm_BYE       db 'bye',       0
+nm_CR        db 'cr',        0
+nm_TSPI      db '+L',        0
+nm_TSPD      db '-L',        0
+nm_XFET      db 'x@',        0
+nm_XSTO      db 'x!',        0
+nm_XFETI     db 'x@+',       0
+nm_YFET      db 'y@',        0
+nm_YSTO      db 'y!',        0
+nm_YFETI     db 'y@+',       0
+nm_ZFET      db 'z@',        0
+nm_ZSTO      db 'z!',        0
+nm_ZFETI     db 'z@+',       0
+nm_SLEN      db 's-len',     0
+nm_LCASE     db 'lcase',     0
+nm_SEQI      db 's-eqi',     0
+nm_FIND      db 'find',      0
+nm_ADDDICT   db 'add-word',  0
+nm_TOIN      db '>in',       0
+nm_WD        db 'wd',        0
+nm_NEXTWORD  db 'next-word', 0
+nm_EXIT_A    db '(exit)',    0
+nm_ISNUM     db 'is-num',    0
+nm_IMMEDIATE db 'immediate', 0
+nm_COUNT     db 'count',     0
+nm_FOPEN     db 'fopen',     0
+nm_FCLOSE    db 'fclose',    0
+nm_FREAD     db 'fread',     0
+nm_FWRITE    db 'fwrite',    0
+nm_OUTER     db 'outer',     0
+nm_SYSCALL0  db 'syscall0',  0
+nm_SYSCALL1  db 'syscall1',  0
+nm_SYSCALL2  db 'syscall2',  0
+nm_SYSCALL3  db 'syscall3',  0
+nm_SYSCALL4  db 'syscall4',  0
+nm_SYSCALL5  db 'syscall5',  0
+nm_SYSCALL6  db 'syscall6',  0
 
 align 8
+execBuf     dq 0, 0, 0, 0
 dStack      rq 256
 rStack      rq 256
 tStack      rq 64
+lStack      rq 64
 
-THE_CODE:   rb CODE_SZ
 THE_DICT:   rb DICT_SZ
+THE_CODE:   rb CODE_SZ
 THE_ROM = boot

@@ -64,9 +64,9 @@ I actually directed Claude (Haiku 4.5 + Sonnet 4.5) to code most of it (with gui
 ### Return Stack
 | Word | Stack               | Description |
 |------|---------------------|------------------------------|
-| >r   | (n --) (R: -- n )   | Push to return stack |
-| r>   | (-- n) (R: n --)    | Pop from return stack |
+| >r   | (n --) (R: -- n)    | Push to return stack |
 | r@   | (-- n) (R: n -- n ) | Copy return stack top |
+| r>   | (-- n) (R: n --)    | Pop from return stack |
 
 ### Literals & Code
 | Word | Stack     | Description |
@@ -91,7 +91,7 @@ I actually directed Claude (Haiku 4.5 + Sonnet 4.5) to code most of it (with gui
 | last     | (-- addr)    | Address of last dictionary entry |
 | base     | (-- addr)    | Current number base |
 | find     | (cs -- addr) | Find word in dictionary (0 if not found) |
-| add-word | (cs --)      | Add new word to dictionary |
+| add-word | (--)         | Add the next word to dictionary |
 
 ### String Operations
 | Word      | Stack           | Description |
