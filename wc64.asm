@@ -76,9 +76,16 @@ macro lPop reg {
     sub     r12, CELL_SZ
 }
 
+; ******************************************************************************
 macro doNext {
     ;ret
-    jmp interpret
+    jmp inner
+}
+
+; ******************************************************************************
+; TAGGED_NUM macro - applies bit 63 to mark a value as numeric literal or constant
+macro TAGGED_NUM name, val {
+    name = (val) + xNum
 }
 
 ; ******************************************************************************
@@ -104,13 +111,18 @@ main:
     mov     r15, THE_ROM        ; Instruction pointer
     
     ; Jump to interpreter
-    call    interpret
+    call    inner
     jmp     p_BYE
 
 ; ******************************************************************************
 ; Inner Interpreter (threaded code)
 ; ******************************************************************************
-interpret:
+doNumber:
+    btr     rbx, 63             ; Clear high bit to get value
+    sPush   rbx                 ; Push to stack
+    ; fall through to inner
+
+inner:
     test    r15, r15            ; Check for end of code (NULL)
     jz      .done
     mov     rbx, [r15]          ; Fetch next instruction
@@ -119,12 +131,10 @@ interpret:
     cmp     rbx, primEnd        ; Primitive? (30% - most common non-XT exit)
     jnb     .chklit
     jmp     rbx                 ; Execute primitive
-    ;call    rbx                 ; Execute primitive
-    ;jmp     interpret
 
 .chklit:
     test    rbx, rbx            ; Literal? bit63 set (10%)
-    js      .number
+    js      doNumber
 
     ; Colon definition (60% = 50% XT + 10% TCO) - falls through
     cmp     qword [r15], p_EXIT ; tail call?
@@ -132,12 +142,7 @@ interpret:
     rPush   r15                 ; Save current IP
 .tail:
     mov     r15, rbx            ; Jump to definition
-    jmp     interpret
-
-.number:
-    btr     rbx, 63             ; Clear high bit to get value
-    sPush   rbx                 ; Push to stack
-    jmp     interpret
+    jmp     inner
 
 .done:      
     mov     r13, rStack         ; Reset return stack
@@ -421,15 +426,6 @@ p_LITCOMMA:
     call    doLitComma
     doNext
 
-; Dictionary
-; p_PLAST - now a tagged address literal in primTable
-
-p_CELL:
-    sPush   CELL_SZ
-    doNext
-
-; p_STATE - now a tagged address literal in primTable
-
 ; Add next word to dictionary ( -- )
 ; XT = HERE (captured by addDictEntry)
 p_ADDDICT:
@@ -439,15 +435,22 @@ p_ADDDICT:
     doNext
 
 ; Control flow
-p_BRANCH:
+p_JMP:
     mov     rbx, [r15]
     mov     r15, rbx
     doNext
 
-p_ZBRANCH:
+p_JMPZ:
     sPop    rbx
     test    rbx, rbx
-    jz      p_BRANCH
+    jz      p_JMP
+    add     r15, CELL_SZ
+    doNext
+
+p_JMPNZ:
+    sPop    rbx
+    test    rbx, rbx
+    jnz     p_JMP
     add     r15, CELL_SZ
     doNext
 
@@ -602,16 +605,6 @@ p_SEQI:
     call doSeqI
     doNext
     
-; >in ( -- a )  push address of the input pointer variable
-p_TOIN:
-    sPush   TOIN
-    doNext
-
-; wd ( -- a )  push address of the word buffer
-p_WD:
-    sPush   WD
-    doNext
-
 ; next-word ( -- )  skip whitespace, parse next word from input into WD
 ; WD is a counted+null-terminated string: WD[0]=len, WD[1..len]=chars, WD[len+1]=0
 doNextWord:
@@ -647,11 +640,6 @@ doNextWord:
 
 p_NEXTWORD:
     call doNextWord
-    doNext
-
-p_EXIT_A:
-    mov     rbx, p_EXIT
-    sPush   rbx
     doNext
 
 ; find ( cs -- e )  search dictionary for counted string cs, return entry addr or 0
@@ -1000,7 +988,7 @@ outer:
     mov     [execBuf+8], p_EXIT ; return to EXIT when done
     push    r15                 ; save outer IP
     lea     r15, [execBuf]
-    call    interpret
+    call    inner
     pop     r15                 ; restore outer IP
     jmp     .loop
 
@@ -1081,16 +1069,20 @@ initDict:
 .done:
     ret
 
-; Tagged addresses
-PLIT_ADDR = p_LIT + 0x8000000000000000
-
 ; Tagged numeric values and addresses
-CELL_NUM = CELL_SZ + 0x8000000000000000
-H_ADDR = HERE + 0x8000000000000000
-L_ADDR = LAST + 0x8000000000000000
-MEM_ADDR = THE_CODE + 0x8000000000000000
-BASE_ADDR = BASE + 0x8000000000000000
-STATE_ADDR = STATE + 0x8000000000000000
+TAGGED_NUM  PLIT_ADDR,    p_LIT
+TAGGED_NUM  PEXIT_ADDR,   p_EXIT
+TAGGED_NUM  PJMP_ADDR,    p_JMP
+TAGGED_NUM  PJMPZ_ADDR,   p_JMPZ
+TAGGED_NUM  PJMPNZ_ADDR,  p_JMPNZ
+TAGGED_NUM  CELL_NUM,     CELL_SZ
+TAGGED_NUM  H_ADDR,       HERE
+TAGGED_NUM  L_ADDR,       LAST
+TAGGED_NUM  MEM_ADDR,     THE_CODE
+TAGGED_NUM  BASE_ADDR,    BASE
+TAGGED_NUM  STATE_ADDR,   STATE
+TAGGED_NUM  WD_ADDR,      WD
+TAGGED_NUM  TOIN_ADDR,    TOIN
 
 primTable:
     dq nm_EXIT,      p_EXIT
@@ -1119,7 +1111,6 @@ primTable:
     dq nm_TOR,       p_TOR
     dq nm_FROMR,     p_FROMR
     dq nm_RFETCH,    p_RFETCH
-    dq nm_LIT,       p_LIT
     dq nm_EMIT,      p_EMIT
     dq nm_TYPE,      p_TYPE
     dq nm_KEY,       p_KEY
@@ -1129,9 +1120,6 @@ primTable:
     dq nm_UNLOOP,    p_UNLOOP
     dq nm_COMMA,     p_COMMA
     dq nm_LITCOMMA,  p_LITCOMMA
-    dq nm_CELL,      p_CELL
-    dq nm_BRANCH,    p_BRANCH
-    dq nm_ZBRANCH,   p_ZBRANCH
     dq nm_BYE,       p_BYE
     dq nm_CR,        p_CR
     dq nm_TSPI,      p_TSPI
@@ -1150,10 +1138,7 @@ primTable:
     dq nm_SEQI,      p_SEQI
     dq nm_FIND,      p_FIND
     dq nm_ADDDICT,   p_ADDDICT
-    dq nm_TOIN,      p_TOIN
-    dq nm_WD,        p_WD
     dq nm_NEXTWORD,  p_NEXTWORD
-    dq nm_EXIT_A,    p_EXIT_A
     dq nm_ISNUM,     p_ISNUM
     dq nm_IMMEDIATE, p_IMMEDIATE
     dq nm_COUNT,     p_COUNT
@@ -1171,11 +1156,18 @@ primTable:
     dq nm_SYSCALL6,  p_SYSCALL6
     ; Tagged numeric values and addresses
     dq nm_PLIT,      PLIT_ADDR
+    dq nm_PEXIT,     PEXIT_ADDR
+    dq nm_PJMP,      PJMP_ADDR
+    dq nm_PJMPZ,     PJMPZ_ADDR
+    dq nm_PJMPNZ,    PJMPNZ_ADDR
     dq nm_PHERE,     H_ADDR
     dq nm_MEM,       MEM_ADDR
     dq nm_PLAST,     L_ADDR
     dq nm_BASE,      BASE_ADDR
     dq nm_STATE,     STATE_ADDR
+    dq nm_WD,        WD_ADDR
+    dq nm_TOIN,      TOIN_ADDR
+    dq nm_CELL,      CELL_NUM
     dq 0, 0  ; end of table
 
 ; ******************************************************************************
@@ -1188,7 +1180,7 @@ boot:
     dq p_LIT, bootFile, p_LIT, 0       ; ( -- name O_RDONLY )
     dq p_FOPEN                         ; ( nm mode -- fd )
     dq p_DUP, p_LIT, 0, p_LESS         ; ( fd -- fd fd<0 )
-    dq p_ZBRANCH, boot_ok
+    dq p_JMPZ, boot_ok
     dq p_DROP
     dq p_LIT, bootErrStr, p_LIT, bootErrLen, p_TYPE
     dq p_BYE
@@ -1198,7 +1190,7 @@ boot_ok:
     dq p_YFET, p_LIT, 100000, p_XFET   ; ( -- addr size fd )
     dq p_FREAD                         ; ( addr size fd -- bytes )
     dq p_DUP, p_LIT, 0, p_LESS         ; ( bytes -- bytes bytes<0 )
-    dq p_ZBRANCH, boot_read_ok
+    dq p_JMPZ, boot_read_ok
     dq p_DROP
     dq p_LIT, bootErrStr, p_LIT, bootErrLen, p_TYPE
     dq p_BYE
@@ -1255,7 +1247,6 @@ nm_CSTORE    db 'c!',        0
 nm_TOR       db '>r',        0
 nm_FROMR     db 'r>',        0
 nm_RFETCH    db 'r@',        0
-nm_LIT       db 'lit',       0
 nm_EMIT      db 'emit',      0
 nm_TYPE      db 'type',      0
 nm_KEY       db 'key',       0
@@ -1265,9 +1256,6 @@ nm_NEXT      db 'next',      0
 nm_UNLOOP    db 'unloop',    0
 nm_COMMA     db ',',         0
 nm_LITCOMMA  db 'lit,',      0
-nm_CELL      db 'cell',      0
-nm_BRANCH    db 'branch',    0
-nm_ZBRANCH   db '0branch',   0
 nm_BYE       db 'bye',       0
 nm_CR        db 'cr',        0
 nm_TSPI      db '+L',        0
@@ -1289,7 +1277,6 @@ nm_ADDDICT   db 'add-word',  0
 nm_TOIN      db '>in',       0
 nm_WD        db 'wd',        0
 nm_NEXTWORD  db 'next-word', 0
-nm_EXIT_A    db '(exit)',    0
 nm_ISNUM     db 'is-num',    0
 nm_IMMEDIATE db 'immediate', 0
 nm_COUNT     db 'count',     0
@@ -1307,11 +1294,16 @@ nm_SYSCALL5  db 'syscall5',  0
 nm_SYSCALL6  db 'syscall6',  0
 ; Names for tagged values
 nm_PLIT      db '(lit)',     0
+nm_PEXIT     db '(exit)',    0
+nm_PJMP      db '(jmp)',     0
+nm_PJMPZ     db '(jmpz)',    0
+nm_PJMPNZ    db '(jmpnz)',   0
 nm_PHERE     db '(h)',       0
-nm_MEM       db 'mem',       0
 nm_PLAST     db '(l)',       0
+nm_MEM       db 'mem',       0
 nm_BASE      db 'base',      0
 nm_STATE     db 'state',     0
+nm_CELL      db 'cell',      0
 
 align 8
 execBuf     dq 0, 0, 0, 0

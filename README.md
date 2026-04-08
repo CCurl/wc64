@@ -1,7 +1,7 @@
 # What is wc64?
 wc64 is a 64-bit implementation of Forth inspired by Tachyon, written for the FASM assembler.
 
-The executable is currently at about 5512 bytes.
+The executable is currently at about 5624 bytes.
 
 wc64 has a bunch of primitives and it:
 - has a minimal "outer loop"
@@ -13,7 +13,7 @@ wc64 has a bunch of primitives and it:
 ## Architecture Highlights
 - **Direct-threaded interpreter** with tail-call dispatch optimization (31.5% faster than traditional CALL/RET)
 - **Bit 63 tagging** for numeric literals and constants: enables unified dispatch through the interpreter
-- **Tagged constants** in primTable: `(lit)`, `(h)`, `mem`, `cell`, `(l)`, `base`, `state` are now compile-time constants rather than primitives
+- **Tagged constants** in primTable: `(lit)`, `(jmp)`, `(jmpz)`, `(jmpnz)`, `(h)`, `mem`, `cell`, `(l)`, `base`, `state` are compile-time constants generated via the `TAGGED_NUM` macro
 
 ### Tagged Constants Explanation
 The interpreter uses bit 63 as a marker to distinguish between different value types:
@@ -21,6 +21,19 @@ The interpreter uses bit 63 as a marker to distinguish between different value t
 - **Bit 63 = 1**: Numeric literal or constant → extract value with `btr` and push to stack
 
 This unified approach eliminates special casing in the dictionary lookup and dispatch logic. Constants like `cell` (8) and address references like `(h)` are stored in primTable with bit 63 set, so they behave identically to numeric literals in code.
+
+#### TAGGED_NUM Macro
+Tagged constants are generated using the `TAGGED_NUM` macro:
+```asm
+macro TAGGED_NUM name, val {
+    name = (val) + xNum
+}
+
+TAGGED_NUM PLIT_ADDR,   p_LIT
+TAGGED_NUM PJMP_ADDR,   p_JMP
+```
+
+This approach keeps the constant definitions DRY and ensures all tagged values are consistently marked with bit 63.
 
 ## Building wc64
 - On Linux, use make. Requires that `fasm` is installed.
@@ -130,8 +143,9 @@ I actually directed Claude (Haiku 4.5) to code most of it (with guidance from me
 | Word    | Stack  | Description |
 |---------|--------|------------------------------|
 | exit    | (--)   | Return from colon definition |
-| branch  | (--)   | Unconditional branch |
-| 0branch | (f --) | Branch if zero |
+| (jmp)   | (--)   | Unconditional branch |
+| (jmpz)  | (f --) | Branch if zero |
+| (jmpnz) | (f --) | Branch if nonzero |
 
 ### Locals (Temp Stack)
 | Word | Stack  | Description |

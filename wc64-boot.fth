@@ -14,9 +14,21 @@ xx
 mem 64 kb cells + const vars
 vars const (vh)
 vars cell + (vh) !
+: here (h) @ ;
 : vhere (vh) @ ;
 : allot vhere + (vh) ! ;
 : variable vhere const cell allot ;
+
+: if (jmpz) , here 0 , ; immediate
+: then here swap ! ; immediate
+
+: begin here ; immediate
+: while (jmpnz) , ; immediate
+: until (jmpz)  , ; immediate
+: again (jmp)   , ; immediate
+
+: test-t 'n' swap if drop 'y' then emit cr ;
+1 test-t 0 test-t
 
 variable ttt   : ttt@ ttt @ ; : ttt! ttt ! ;
 variable xxx   : xxx@ xxx @ ; : xxx! xxx ! ;
