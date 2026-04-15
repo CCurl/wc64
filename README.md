@@ -1,7 +1,7 @@
 # What is wc64?
 wc64 is a 64-bit implementation of Forth inspired by Tachyon, written for the FASM assembler.
 
-The executable is currently at about 5528 bytes.
+The executable is currently at about 5552 bytes.
 
 wc64 has a bunch of primitives and it:
 - has a minimal "inner loop"
@@ -13,7 +13,7 @@ wc64 has a bunch of primitives and it:
 ## Architecture Highlights
 - **Direct-threaded interpreter** with tail-call dispatch optimization (31.5% faster than traditional CALL/RET)
 - **Bit 63 tagging** for numeric literals and constants: enables unified dispatch through the interpreter
-- **Tagged constants** in primTable: `(lit)`, `(jmp)`, `(jmpz)`, `(jmpnz)`, `(njmpz)`, `(njmpnz)`, `(h)`, `mem`, `cell`, `(l)`, `base`, `state` are compile-time constants generated via the `TAGGED_NUM` macro
+- **Tagged constants** in primTable: `(lit)`, `(jmp)`, `(jmpz)`, `(jmpnz)`, `(njmpz)`, `(njmpnz)`, `(h)`, `mem`, `cell`, `version`, `(l)`, `base`, `state` are compile-time constants generated via the `TAGGED_NUM` macro
 
 ### Tagged Constants Explanation
 The interpreter uses bit 63 as a marker to distinguish between different value types:
@@ -100,6 +100,7 @@ I actually directed Claude (Haiku 4.5) to code most of it (with guidance from me
 | (h)*   | (-- addr) | Address of HERE variable (tagged constant) |
 | mem*   | (-- addr) | Base address of code memory (tagged constant) |
 | cell*  | (-- n)    | Size of a cell in bytes (tagged constant) |
+| version* | (-- n)  | Version number (tagged constant) |
 | ,      | (n --)    | Compile cell to HERE |
 
 \* *Indicates tagged constant: value is pushed directly via bit 63 tagging*

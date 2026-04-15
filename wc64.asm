@@ -25,6 +25,7 @@ CELL_SZ = 8
 CODE_SZ = 15*1024*1024
 DICT_SZ =  1*1024*1024
 TIB_SZ  = 128
+VERSION = 3
 
 ; Numeric literal encoding (high bit tagging for speed)
 xNum    = 0x8000000000000000
@@ -1090,6 +1091,7 @@ TAGGED_NUM  PJMPNZ_ADDR,  p_JMPNZ
 TAGGED_NUM  PNJMPZ_ADDR,  p_NJMPZ
 TAGGED_NUM  PNJMPNZ_ADDR, p_NJMPNZ
 TAGGED_NUM  CELL_NUM,     CELL_SZ
+TAGGED_NUM  VERSION_NUM,  VERSION
 TAGGED_NUM  H_ADDR,       HERE
 TAGGED_NUM  L_ADDR,       LAST
 TAGGED_NUM  MEM_ADDR,     THE_CODE
@@ -1184,6 +1186,7 @@ primTable:
     dq nm_WD,        WD_ADDR
     dq nm_TOIN,      TOIN_ADDR
     dq nm_CELL,      CELL_NUM
+    dq nm_VERSION,   VERSION_NUM
     dq 0, 0  ; end of table
 
 ; ******************************************************************************
@@ -1322,6 +1325,7 @@ nm_MEM       db 'mem',       0
 nm_BASE      db 'base',      0
 nm_STATE     db 'state',     0
 nm_CELL      db 'cell',      0
+nm_VERSION   db 'version',   0
 
 align 8
 execBuf     dq 0, 0, 0, 0
