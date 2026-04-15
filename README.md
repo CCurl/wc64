@@ -1,10 +1,10 @@
 # What is wc64?
 wc64 is a 64-bit implementation of Forth inspired by Tachyon, written for the FASM assembler.
 
-The executable is currently at about 5624 bytes.
+The executable is currently at about 5528 bytes.
 
 wc64 has a bunch of primitives and it:
-- has a minimal "outer loop"
+- has a minimal "inner loop"
 - can create colon-definitions,
 - knows about immediate words,
 - can make any syscall (with 0-6 arguments), and
@@ -13,7 +13,7 @@ wc64 has a bunch of primitives and it:
 ## Architecture Highlights
 - **Direct-threaded interpreter** with tail-call dispatch optimization (31.5% faster than traditional CALL/RET)
 - **Bit 63 tagging** for numeric literals and constants: enables unified dispatch through the interpreter
-- **Tagged constants** in primTable: `(lit)`, `(jmp)`, `(jmpz)`, `(jmpnz)`, `(h)`, `mem`, `cell`, `(l)`, `base`, `state` are compile-time constants generated via the `TAGGED_NUM` macro
+- **Tagged constants** in primTable: `(lit)`, `(jmp)`, `(jmpz)`, `(jmpnz)`, `(njmpz)`, `(njmpnz)`, `(h)`, `mem`, `cell`, `(l)`, `base`, `state` are compile-time constants generated via the `TAGGED_NUM` macro
 
 ### Tagged Constants Explanation
 The interpreter uses bit 63 as a marker to distinguish between different value types:
@@ -140,12 +140,14 @@ I actually directed Claude (Haiku 4.5) to code most of it (with guidance from me
 | is-num | (cs -- n 1 \| 0) | Parse number (decimal/hex/binary) |
 
 ### Control Flow
-| Word    | Stack  | Description |
-|---------|--------|------------------------------|
-| exit    | (--)   | Return from colon definition |
-| (jmp)   | (--)   | Unconditional branch |
-| (jmpz)  | (f --) | Branch if zero |
-| (jmpnz) | (f --) | Branch if nonzero |
+| Word     | Stack  | Description |
+|----------|--------|------------------------------|
+| exit     | (--)   | Return from colon definition |
+| (jmp)    | (--)   | Unconditional branch |
+| (jmpz)   | (f --) | Branch if zero (pops stack) |
+| (jmpnz)  | (f --) | Branch if nonzero (pops stack) |
+| (njmpz)  | (--)   | Branch if TOS zero (no pop) |
+| (njmpnz) | (--)   | Branch if TOS nonzero (no pop) |
 
 ### Locals (Temp Stack)
 | Word | Stack  | Description |
@@ -179,7 +181,7 @@ I actually directed Claude (Haiku 4.5) to code most of it (with guidance from me
 | Word     | Stack                      | Description |
 |----------|------------------------    |------------------------------|
 | syscall0 | (n -- r)                   | Make Linux syscall with 0 args |
-| syscall1 | (a1 n -- r)                | Make Linux syscall with 1 arg |
+| syscall1 | (a1 n -- r)                | Make Linux syscall with 1 arg  |
 | syscall2 | (a1 a2 n -- r)             | Make Linux syscall with 2 args |
 | syscall3 | (a1 a2 a3 n -- r)          | Make Linux syscall with 3 args |
 | syscall4 | (a1 a2 a3 a4 n -- r)       | Make Linux syscall with 4 args |
@@ -191,4 +193,3 @@ I actually directed Claude (Haiku 4.5) to code most of it (with guidance from me
 |-------|----------|------------------------------|
 | outer | (str --) | Interpret string as Forth code |
 | bye   | (--)     | Exit the system |
-

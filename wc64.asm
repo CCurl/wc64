@@ -454,6 +454,18 @@ p_JMPNZ:
     add     r15, CELL_SZ
     doNext
 
+p_NJMPZ:
+    test    rax, rax
+    jz      p_JMP
+    add     r15, CELL_SZ
+    doNext
+
+p_NJMPNZ:
+    test    rax, rax
+    jnz     p_JMP
+    add     r15, CELL_SZ
+    doNext
+
 ; System
 p_BYE:
     mov     rax, 60             ; sys_exit
@@ -1075,6 +1087,8 @@ TAGGED_NUM  PEXIT_ADDR,   p_EXIT
 TAGGED_NUM  PJMP_ADDR,    p_JMP
 TAGGED_NUM  PJMPZ_ADDR,   p_JMPZ
 TAGGED_NUM  PJMPNZ_ADDR,  p_JMPNZ
+TAGGED_NUM  PNJMPZ_ADDR,  p_NJMPZ
+TAGGED_NUM  PNJMPNZ_ADDR, p_NJMPNZ
 TAGGED_NUM  CELL_NUM,     CELL_SZ
 TAGGED_NUM  H_ADDR,       HERE
 TAGGED_NUM  L_ADDR,       LAST
@@ -1160,6 +1174,8 @@ primTable:
     dq nm_PJMP,      PJMP_ADDR
     dq nm_PJMPZ,     PJMPZ_ADDR
     dq nm_PJMPNZ,    PJMPNZ_ADDR
+    dq nm_PNJMPZ,    PNJMPZ_ADDR
+    dq nm_PNJMPNZ,   PNJMPNZ_ADDR
     dq nm_PHERE,     H_ADDR
     dq nm_MEM,       MEM_ADDR
     dq nm_PLAST,     L_ADDR
@@ -1298,6 +1314,8 @@ nm_PEXIT     db '(exit)',    0
 nm_PJMP      db '(jmp)',     0
 nm_PJMPZ     db '(jmpz)',    0
 nm_PJMPNZ    db '(jmpnz)',   0
+nm_PNJMPZ    db '(njmpz)',   0
+nm_PNJMPNZ   db '(njmpnz)',  0
 nm_PHERE     db '(h)',       0
 nm_PLAST     db '(l)',       0
 nm_MEM       db 'mem',       0
