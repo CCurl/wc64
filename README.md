@@ -1,7 +1,7 @@
 # What is wc64?
 wc64 is a 64-bit implementation of Forth inspired by Tachyon, written for the FASM assembler.
 
-The executable is currently at about 5552 bytes.
+The executable is currently at about 5496 bytes.
 
 wc64 has a bunch of primitives and it:
 - has a minimal "inner loop"
@@ -111,7 +111,6 @@ I actually directed Claude (Haiku 4.5) to code most of it (with guidance from me
 | emit | (c --)        | Output character |
 | type | (addr len --) | Output string |
 | key  | (-- c)        | Read character from input |
-| cr   | (--)          | Output newline |
 
 ### Dictionary
 | Word     | Stack        | Description |
@@ -127,11 +126,11 @@ I actually directed Claude (Haiku 4.5) to code most of it (with guidance from me
 ### String Operations
 | Word      | Stack           | Description |
 |-----------|-----------------|------------------------------|
-| s-len     | (str -- n)      | Length of null-terminated string |
 | lcase     | (c -- c')       | Convert character to lowercase |
+| s-len     | (str -- n)      | Length of null-terminated string |
 | s-eqi     | (s1 s2 -- f)    | Case-insensitive string equality |
 | count     | (cs -- str len) | Split counted string into address/length |
-| next-word | (--)            | Parse next word from input |
+| next-word | (--)            | Parse next word from input. Result in `wd` |
 | >in       | (-- addr)       | Address of input position variable |
 | wd        | (-- addr)       | Address of word buffer |
 

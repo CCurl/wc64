@@ -1,12 +1,4 @@
-: hi 'h' emit 'i' emit cr ; hi
-: cya 'b' emit 'y' emit 'e' emit cr bye ;
-: s 's' emit ; : e 'e' emit ;
-: mil 1000 dup * * ; mil
-: xx s 1000 mil for next e cr ;
-xx
-
-33 32 + emit cr
-33 dup + emit cr
+: cr 10 emit ;
 
 : cells cell * ;
 : kb 1024 dup * ;
@@ -31,13 +23,28 @@ vars cell + (vh) !
 : until  (jmpz)   , ; immediate
 : again  (jmp)    , ; immediate
 
-: test-t 'n' swap if drop 'y' then emit cr ;
-1 test-t 0 test-t
+: 2drop drop drop ;
+: ztype dup c@ -if0 2drop exit then emit 1+ ztype ;
+: abs dup 0 < if negate then ;
 
-variable ttt   : ttt@ ttt @ ; : ttt! ttt ! ;
-variable xxx   : xxx@ xxx @ ; : xxx! xxx ! ;
-55 ttt! ttt@ emit
-56 xxx! xxx@ emit
-55 ttt! ttt@ emit '-' emit cell '0' + emit cr
+variable #buf  64 allot
+variable bp
 
-cya
+: space 32 emit ;
+: hold bp @ 1- dup bp ! c! ;
+: #n dup 9 > if 7 + then '0' + hold ;
+: # base @ /mod swap #n ;
+: #s # -if #s exit then drop ;
+: <# dup 0 < #buf c! bp bp ! 0 hold abs ;
+: #> #buf c@ if '-' hold then bp @ ;
+: (.) <# #s #> ztype ;
+: . (.) space ;
+
+: hi 'h' emit 'i' emit cr ;
+: cya 'b' emit 'y' emit 'e' emit cr bye ;
+: s 's' emit ; : e 'e' emit ;
+: mil 1000 dup * * ; mil
+: xx 1000 mil dup . s for next e cr ;
+: #. '.' hold ;
+: .ver 'v' emit version <# # # #. # # #. #s #> ztype cr ;
+.ver hi xx cya
