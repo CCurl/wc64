@@ -40,11 +40,17 @@ variable bp
 : (.) <# #s #> ztype ;
 : . (.) space ;
 
+: mil 1000 dup * * ; mil
+
+variable tm-struct 8 allot
+: lap tm-struct y! 1 y@ 228 syscall2 drop
+    y@ @ 1000 mil * y@ 8 + @ + ;
+: .lap lap swap - . ;
+
 : hi 'h' emit 'i' emit cr ;
 : cya 'b' emit 'y' emit 'e' emit cr bye ;
 : s 's' emit ; : e 'e' emit ;
-: mil 1000 dup * * ; mil
-: xx 1000 mil dup . s for next e cr ;
+: bb s lap 1000 mil for next e space .lap cr ;
 : #. '.' hold ;
 : .ver 'v' emit version <# # # #. # # #. #s #> ztype cr ;
-.ver hi xx cya
+.ver hi bb cya

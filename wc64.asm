@@ -373,8 +373,8 @@ p_FOR: ; ( limit-- ), index goes from 0 to limit-1
     sPop    rbx                 ; limit
     lPush   r15                 ; start -> loop stack
     lPush   rbx                 ; limit -> loop stack
-    xor     r11, r11
-    lPush   r11                 ; index -> loop stack
+    xor     r11, r11            ; index = 0
+    lPush   r11                 ; save current index
     doNext
 
 p_INDEX: ; ( -- index)
@@ -388,7 +388,7 @@ p_NEXT: ; ( -- )
     cmp     r11, [r12-8]        ; limit
     jge     p_UNLOOP
     mov     [r12], r11
-    mov     r15, [r12-16]       ; restart loop
+    mov     r15, [r12-16]       ; back to start of loop
     doNext
 
 p_UNLOOP: ; ( -- )  unwind the loop stack frame
@@ -399,7 +399,6 @@ p_UNLOOP: ; ( -- )  unwind the loop stack frame
     jge     .lDone
     mov     r12, lStack
 .lDone:
-    mov     r11, [r12]
     doNext
 
 ; comma ( n -- )  compile n into HERE
@@ -477,13 +476,6 @@ p_BYE:
     mov     rax, 60             ; sys_exit
     xor     rdi, rdi            ; exit code 0
     syscall
-
-doCR:
-    sPush   10
-    call    doEmit
-    sPush   13
-    call    doEmit
-    ret
 
 ; Locals (temp stack) frame ops
 ; r14 points directly to current frame's x slot; [r14]=x, [r14+8]=y, [r14+16]=z
@@ -1003,7 +995,10 @@ outer:
     sPush   WD
     call    doCount
     call    doType
-    call    doCR
+    sPush   13
+    call    doEmit
+    sPush   10
+    call    doEmit
     ; fall through to done
 
 .done:
