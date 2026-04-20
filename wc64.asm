@@ -1,5 +1,6 @@
 ; WC64 - A minimal 64-bit Forth system for Linux
 ; Using optimal register allocation for x86-64
+; Numeric literal encoding (high bit tagging for speed)
 
 format ELF64 executable 3
 
@@ -25,10 +26,7 @@ CELL_SZ = 8
 CODE_SZ = 15*1024*1024
 DICT_SZ =  1*1024*1024
 TIB_SZ  = 128
-
-; Numeric literal encoding (high bit tagging for speed)
-xNum    = 0x8000000000000000
-numMask = 0x7FFFFFFFFFFFFFFF
+VERSION = 20260415
 
 ; Dictionary entry layout (fixed 32 bytes, grows downward):
 ; XT/8, Flags/1, Len/1, Name/22 (null-terminated, max 21 chars)
@@ -85,7 +83,7 @@ macro doNext {
 ; ******************************************************************************
 ; TAGGED_NUM macro - applies bit 63 to mark a value as numeric literal or constant
 macro TAGGED_NUM name, val {
-    name = (val) + xNum
+    name = (val) + 0x8000000000000000
 }
 
 ; ******************************************************************************
@@ -206,16 +204,15 @@ p_MULT:
     doNext
 
 p_DIVMOD:
-    sPop    rbx                 ; divisor
-    cmp     rbx, 0
-    je      .zero
-    sPop    rcx                 ; dividend
-    mov     rax, rcx
+    test    rax, rax            ; divisor
+    jz      .zero
+    mov     rbx, rax
+    mov     rax, [rbp]          ; dividend
     cqo                         ; Sign extend rax into rdx:rax
     idiv    rbx
-    sPush   rdx                 ; remainder
     ; rax already has quotient
-    doNext
+    mov    [rbp], rdx           ; remainder
+    ; fall through to doNext
 .zero:
     doNext
 
@@ -317,7 +314,7 @@ p_LIT:
     sPush   rbx
     doNext
 
-; I/O
+; emit ( c -- )  write character to stdout
 doEmit:
     sPop    rbx
     mov     [charBuf], bl
@@ -334,6 +331,18 @@ p_EMIT:
     call    doEmit
     doNext
 
+; count ( cs -- str len )  split counted string into addr/len pair
+doCount:
+    movzx   rbx, byte [rax]     ; rbx = length
+    inc     rax                 ; rax = char area (cs+1)
+    sPush   rbx                 ; save str, TOS = len
+    ret
+
+p_COUNT:
+    call    doCount
+    doNext
+
+; type ( str len -- )  write string to stdout
 doType:
     sPop    rdx                 ; length
     sPop    rsi                 ; address
@@ -348,6 +357,7 @@ p_TYPE:
     call    doType
     doNext
 
+; key ( -- char )  read a character from stdin
 p_KEY:
     sPush   0                   ; placeholder for char
     mov     rdx, 1              ; length
@@ -358,13 +368,13 @@ p_KEY:
     movzx   rax, byte [charBuf]
     doNext
 
-; FOR/NEXT/I
+; FOR/NEXT/I/UNLOOP - simple counted loops with index
 p_FOR: ; ( limit-- ), index goes from 0 to limit-1
     sPop    rbx                 ; limit
     lPush   r15                 ; start -> loop stack
     lPush   rbx                 ; limit -> loop stack
-    xor     r11, r11
-    lPush   r11                 ; index -> loop stack
+    xor     r11, r11            ; index = 0
+    lPush   r11                 ; save current index
     doNext
 
 p_INDEX: ; ( -- index)
@@ -378,7 +388,7 @@ p_NEXT: ; ( -- )
     cmp     r11, [r12-8]        ; limit
     jge     p_UNLOOP
     mov     [r12], r11
-    mov     r15, [r12-16]       ; restart loop
+    mov     r15, [r12-16]       ; back to start of loop
     doNext
 
 p_UNLOOP: ; ( -- )  unwind the loop stack frame
@@ -389,14 +399,9 @@ p_UNLOOP: ; ( -- )  unwind the loop stack frame
     jge     .lDone
     mov     r12, lStack
 .lDone:
-    mov     r11, [r12]
     doNext
 
-; Code pointer
-; p_PHERE - now a tagged address literal in primTable
-
-; p_MEM - now a tagged address literal in primTable
-
+; comma ( n -- )  compile n into HERE
 doComma:
     sPop    rbx
     mov     rcx, [HERE]
@@ -471,17 +476,6 @@ p_BYE:
     mov     rax, 60             ; sys_exit
     xor     rdi, rdi            ; exit code 0
     syscall
-
-doCR:
-    sPush   10
-    call    doEmit
-    sPush   13
-    call    doEmit
-    ret
-
-p_CR:
-    call    doCR
-    doNext
 
 ; Locals (temp stack) frame ops
 ; r14 points directly to current frame's x slot; [r14]=x, [r14+8]=y, [r14+16]=z
@@ -800,17 +794,6 @@ p_IMMEDIATE:
     or      byte [rbx + DE_FLAGS_OFFSET], 0x80
     doNext
 
-; count ( cs -- str len )  split counted string into addr/len pair
-doCount:
-    movzx   rbx, byte [rax]     ; rbx = length
-    inc     rax                 ; rax = char area (cs+1)
-    sPush   rbx                 ; save str, TOS = len
-    ret
-
-p_COUNT:
-    call    doCount
-    doNext
-
 ; fopen ( name flags -- fd )  sys_open; mode=0664 used when creating
 p_FOPEN:
     sPop    rsi                 ; rsi = flags
@@ -1012,7 +995,10 @@ outer:
     sPush   WD
     call    doCount
     call    doType
-    call    doCR
+    sPush   13
+    call    doEmit
+    sPush   10
+    call    doEmit
     ; fall through to done
 
 .done:
@@ -1090,6 +1076,7 @@ TAGGED_NUM  PJMPNZ_ADDR,  p_JMPNZ
 TAGGED_NUM  PNJMPZ_ADDR,  p_NJMPZ
 TAGGED_NUM  PNJMPNZ_ADDR, p_NJMPNZ
 TAGGED_NUM  CELL_NUM,     CELL_SZ
+TAGGED_NUM  VERSION_NUM,  VERSION
 TAGGED_NUM  H_ADDR,       HERE
 TAGGED_NUM  L_ADDR,       LAST
 TAGGED_NUM  MEM_ADDR,     THE_CODE
@@ -1126,7 +1113,6 @@ primTable:
     dq nm_FROMR,     p_FROMR
     dq nm_RFETCH,    p_RFETCH
     dq nm_EMIT,      p_EMIT
-    dq nm_TYPE,      p_TYPE
     dq nm_KEY,       p_KEY
     dq nm_FOR,       p_FOR
     dq nm_INDEX,     p_INDEX
@@ -1135,7 +1121,6 @@ primTable:
     dq nm_COMMA,     p_COMMA
     dq nm_LITCOMMA,  p_LITCOMMA
     dq nm_BYE,       p_BYE
-    dq nm_CR,        p_CR
     dq nm_TSPI,      p_TSPI
     dq nm_TSPD,      p_TSPD
     dq nm_XFET,      p_XFET
@@ -1156,6 +1141,7 @@ primTable:
     dq nm_ISNUM,     p_ISNUM
     dq nm_IMMEDIATE, p_IMMEDIATE
     dq nm_COUNT,     p_COUNT
+    dq nm_TYPE,      p_TYPE
     dq nm_FOPEN,     p_FOPEN
     dq nm_FCLOSE,    p_FCLOSE
     dq nm_FREAD,     p_FREAD
@@ -1184,6 +1170,7 @@ primTable:
     dq nm_WD,        WD_ADDR
     dq nm_TOIN,      TOIN_ADDR
     dq nm_CELL,      CELL_NUM
+    dq nm_VERSION,   VERSION_NUM
     dq 0, 0  ; end of table
 
 ; ******************************************************************************
@@ -1273,7 +1260,6 @@ nm_UNLOOP    db 'unloop',    0
 nm_COMMA     db ',',         0
 nm_LITCOMMA  db 'lit,',      0
 nm_BYE       db 'bye',       0
-nm_CR        db 'cr',        0
 nm_TSPI      db '+L',        0
 nm_TSPD      db '-L',        0
 nm_XFET      db 'x@',        0
@@ -1322,6 +1308,7 @@ nm_MEM       db 'mem',       0
 nm_BASE      db 'base',      0
 nm_STATE     db 'state',     0
 nm_CELL      db 'cell',      0
+nm_VERSION   db 'version',   0
 
 align 8
 execBuf     dq 0, 0, 0, 0
