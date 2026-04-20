@@ -24,19 +24,21 @@ vars cell + (vh) !
 : again  (jmp)    , ; immediate
 
 : 2drop drop drop ;
+: nip swap drop ;
+: / /mod nip ;
 : ztype dup c@ -if0 2drop exit then emit 1+ ztype ;
 : abs dup 0 < if negate then ;
 
 variable #buf  64 allot
-variable bp
+variable #bp
 
 : space 32 emit ;
-: hold bp @ 1- dup bp ! c! ;
+: hold #bp @ 1- dup #bp ! c! ;
 : #n dup 9 > if 7 + then '0' + hold ;
 : # base @ /mod swap #n ;
 : #s # -if #s exit then drop ;
-: <# dup 0 < #buf c! bp bp ! 0 hold abs ;
-: #> #buf c@ if '-' hold then bp @ ;
+: <# dup 0 < #buf c! #bp #bp ! 0 hold abs ;
+: #> #buf c@ if '-' hold then #bp @ ;
 : (.) <# #s #> ztype ;
 : . (.) space ;
 

@@ -26,7 +26,7 @@ This unified approach eliminates special casing in the dictionary lookup and dis
 Tagged constants are generated using the `TAGGED_NUM` macro:
 ```asm
 macro TAGGED_NUM name, val {
-    name = (val) + xNum
+    name = (val) + 0x8000000000000000
 }
 
 TAGGED_NUM PLIT_ADDR,   p_LIT
