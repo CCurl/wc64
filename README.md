@@ -1,7 +1,7 @@
 # What is wc64?
 wc64 is a 64-bit implementation of Forth inspired by Tachyon, written for the FASM assembler.
 
-The executable is currently at about 5528 bytes.
+The executable is currently at about 5496 bytes.
 
 wc64 has a bunch of primitives and it:
 - has a minimal "inner loop"
@@ -13,7 +13,7 @@ wc64 has a bunch of primitives and it:
 ## Architecture Highlights
 - **Direct-threaded interpreter** with tail-call dispatch optimization (31.5% faster than traditional CALL/RET)
 - **Bit 63 tagging** for numeric literals and constants: enables unified dispatch through the interpreter
-- **Tagged constants** in primTable: `(lit)`, `(jmp)`, `(jmpz)`, `(jmpnz)`, `(njmpz)`, `(njmpnz)`, `(h)`, `mem`, `cell`, `(l)`, `base`, `state` are compile-time constants generated via the `TAGGED_NUM` macro
+- **Tagged constants** in primTable: `(lit)`, `(jmp)`, `(jmpz)`, `(jmpnz)`, `(njmpz)`, `(njmpnz)`, `(h)`, `mem`, `cell`, `version`, `(l)`, `base`, `state` are compile-time constants generated via the `TAGGED_NUM` macro
 
 ### Tagged Constants Explanation
 The interpreter uses bit 63 as a marker to distinguish between different value types:
@@ -26,7 +26,7 @@ This unified approach eliminates special casing in the dictionary lookup and dis
 Tagged constants are generated using the `TAGGED_NUM` macro:
 ```asm
 macro TAGGED_NUM name, val {
-    name = (val) + xNum
+    name = (val) + 0x8000000000000000
 }
 
 TAGGED_NUM PLIT_ADDR,   p_LIT
@@ -100,6 +100,7 @@ I actually directed Claude (Haiku 4.5) to code most of it (with guidance from me
 | (h)*   | (-- addr) | Address of HERE variable (tagged constant) |
 | mem*   | (-- addr) | Base address of code memory (tagged constant) |
 | cell*  | (-- n)    | Size of a cell in bytes (tagged constant) |
+| version* | (-- n)  | Version number (tagged constant) |
 | ,      | (n --)    | Compile cell to HERE |
 
 \* *Indicates tagged constant: value is pushed directly via bit 63 tagging*
@@ -110,7 +111,6 @@ I actually directed Claude (Haiku 4.5) to code most of it (with guidance from me
 | emit | (c --)        | Output character |
 | type | (addr len --) | Output string |
 | key  | (-- c)        | Read character from input |
-| cr   | (--)          | Output newline |
 
 ### Dictionary
 | Word     | Stack        | Description |
@@ -126,11 +126,11 @@ I actually directed Claude (Haiku 4.5) to code most of it (with guidance from me
 ### String Operations
 | Word      | Stack           | Description |
 |-----------|-----------------|------------------------------|
-| s-len     | (str -- n)      | Length of null-terminated string |
 | lcase     | (c -- c')       | Convert character to lowercase |
+| s-len     | (str -- n)      | Length of null-terminated string |
 | s-eqi     | (s1 s2 -- f)    | Case-insensitive string equality |
 | count     | (cs -- str len) | Split counted string into address/length |
-| next-word | (--)            | Parse next word from input |
+| next-word | (--)            | Parse next word from input. Result in `wd` |
 | >in       | (-- addr)       | Address of input position variable |
 | wd        | (-- addr)       | Address of word buffer |
 
